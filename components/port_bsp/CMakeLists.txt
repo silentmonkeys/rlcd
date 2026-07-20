@@ -13,4 +13,4 @@ idf_component_register(
     #   esp_lcd_*.h          <- esp_lcd 组件
     #   driver/i2c_master.h  <- esp_driver_i2c 组件
     REQUIRES esp_driver_gpio esp_driver_spi esp_lcd esp_driver_i2c
-    PRIV_REQUIRES esp_timer ui)
+    PRIV_REQUIRES esp_timer ui net_bsp)

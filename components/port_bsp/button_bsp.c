@@ -2,6 +2,7 @@
 //   BOOT  短按 → 下一页（ui_pages_next）
 //   BOOT  长按 → 重建全部页面（ui_pages_rebuild）
 //   KEY   短按 → 上一页（ui_pages_prev）
+//   KEY   长按 → 在 WEATHER 页时立即拉取一次天气（NetBsp_TriggerWeatherFetch）
 //
 // 引脚：直接在这里内联，避免拉 main 组件（防止循环依赖）。
 // 参考 10_FactoryProgram/components/port_bsp/button_bsp.c。
@@ -9,6 +10,7 @@
 #include "button_bsp.h"
 #include "multi_button.h"
 #include "ui_pages.h"
+#include "net_bsp.h"
 
 #include <driver/gpio.h>
 #include <esp_log.h>
@@ -49,6 +51,19 @@ static void on_key_click(Button *btn)
     ui_pages_prev();
 }
 
+// 长按 KEY：只在 WEATHER 详情页触发，立即拉一次天气数据；
+// 其它页面上长按无副作用（避免误触）。
+static void on_key_long(Button *btn)
+{
+    (void)btn;
+    if (ui_pages_current() == UI_PAGE_WEATHER) {
+        ESP_LOGI(TAG, "KEY long press on WEATHER → trigger weather fetch");
+        NetBsp_TriggerWeatherFetch();
+    } else {
+        ESP_LOGI(TAG, "KEY long press (page=%d, ignored)", (int)ui_pages_current());
+    }
+}
+
 // HAL 读引脚电平
 static uint8_t read_button_gpio(uint8_t id)
 {
@@ -86,7 +101,8 @@ void ButtonBsp_Init(void)
 
     // KEY
     button_init(&s_key_btn, read_button_gpio, BTN_ACTIVE, KEY_KEY_ID);
-    button_attach(&s_key_btn, BTN_SINGLE_CLICK, on_key_click);
+    button_attach(&s_key_btn, BTN_SINGLE_CLICK,     on_key_click);
+    button_attach(&s_key_btn, BTN_LONG_PRESS_START, on_key_long);
     button_start(&s_key_btn);
 
     // 5ms tick 定时器
