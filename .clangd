@@ -1,0 +1,9 @@
+CompileFlags:
+    # Xtensa 专属的 -f*/-m* 参数会让 clang 报错，去掉。
+    Remove: [-f*, -m*]
+    # 未在 compile_commands.json 里出现的头文件（例如仅有 .h 的模块），
+    # 让 clangd 默认继承同目录的 CompileFlags。
+    CompilationDatabase: build
+
+Index:
+    Background: Build

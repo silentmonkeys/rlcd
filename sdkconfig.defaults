@@ -1,0 +1,48 @@
+# 目标 ESP32-S3-RLCD-4.2 (400x300 单色屏)
+CONFIG_IDF_TARGET="esp32s3"
+
+# Flash & PSRAM (板载 OPI PSRAM + 16MB Flash)
+CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_80M=y
+CONFIG_SPIRAM_USE_MALLOC=y
+# 曾经打开，但会让 mbedtls/证书链验证的临时缓冲落 PSRAM，
+# 在 IDF v6.0.1 上出现确定性堆损坏（TLSF free-list 里被写入 ASN.1 编码
+# `06 11 06 00...`，下次 malloc 崩在 remove_free_block）。
+# 关掉即可 — WiFi/LWIP 走内部 DRAM，PSRAM 留给 LVGL/UI/图片。
+# CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP is not set
+
+# 自定义分区
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# FreeRTOS tick
+CONFIG_FREERTOS_HZ=1000
+
+# WiFi/HTTP 常用参数
+CONFIG_HTTPD_MAX_REQ_HDR_LEN=1024
+CONFIG_HTTPD_MAX_URI_LEN=512
+CONFIG_ESP_HTTPS_OTA_ALLOW_HTTP=y
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
+# 让 esp_http_client_get_response_header() 可用（用于识别 Content-Encoding: gzip）
+CONFIG_ESP_HTTP_CLIENT_SAVE_RESPONSE_HEADERS=y
+
+# LVGL v9 — 让 lv_conf.h 走组件默认（在 menuconfig 里 LVGL configuration 面板打开）
+# 内存分配器：用 CLIB malloc（走系统堆 → 落到 8MB PSRAM），不用内置静态池。
+# 原因：(1) 内置池在 DRAM，>~180KB 就撑爆 .dram0.bss 链接溢出；
+#       (2) 64KB 池在真机启动建树 5 页（~250 对象）时 OOM 崩溃
+#           Guru Meditation StoreProhibited @ lv_obj_class_create_obj。
+# 模拟器 LV_MEM_SIZE=512KB（PSRAM 充裕）；真机改 CLIB 后无静态上限。
+CONFIG_LV_USE_CLIB_MALLOC=y
+CONFIG_FATFS_LFN_HEAP=y
+
+# 打开 LVGL 字体（真机侧走 kconfig，不是 lv_conf.h）
+# 中文走 tools/gen_font.sh 生成的 ui_font_cjk_16_gen.c，不需要 LVGL 内置的
+CONFIG_LV_FONT_MONTSERRAT_14=y
+CONFIG_LV_FONT_MONTSERRAT_20=y
+CONFIG_LV_FONT_MONTSERRAT_28=y
+
+# 关闭串口日志颜色 (不影响)
+CONFIG_LOG_COLORS=n

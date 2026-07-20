@@ -1,0 +1,22 @@
+{
+  "idf.currentSetup": "/home/chen/.espressif/v6.0.1/esp-idf",
+  "idf.customExtraVars": {
+    "IDF_TARGET": "esp32s3",
+    "IDF_PATH": "/home/chen/.espressif/v6.0.1/esp-idf"
+  },
+  "idf.openOcdConfigs": ["board/esp32s3-builtin.cfg"],
+  "idf.port": "/dev/ttyACM0",
+  "idf.flashType": "UART",
+  "clangd.path": "/home/chen/.espressif/tools/esp-clang/esp-20.1.1_20250829/esp-clang/bin/clangd",
+  "clangd.arguments": [
+    "--background-index",
+    "--query-driver=**",
+    "--compile-commands-dir=/home/chen/esp32/rlcd/build"
+  ],
+  "cmake.configureOnOpen": false,
+  "cmake.configureOnEdit": false,
+  "cmake.automaticReconfigure": false,
+  "cmake.sourceDirectory": "/home/chen/esp32/rlcd",
+  "cmake.buildDirectory": "${workspaceFolder}/.no-cmake-build",
+  "C_Cpp.default.compileCommands": "${workspaceFolder}/build/compile_commands.json"
+}
