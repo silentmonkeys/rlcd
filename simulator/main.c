@@ -18,6 +18,7 @@
 #include "ui_pages.h"
 #include "ui_calendar.h"
 #include "ui_model.h"
+#include "ui_font.h"
 
 #include <SDL.h>
 
@@ -258,6 +259,11 @@ int main(int argc, char **argv)
 
     // 注意顺序：ui_pages_create 会画初始状态栏（此时 model 字段还是默认值 0）
     // → 所以先立刻 sim_tick_data 把 model 填好，再 create，这样初始状态栏就是终态
+    // 字库：从 partitions/fonts/*.bin 加载（与真机同一批文件，保证像素一致）
+    if (!UiFont_LoadFromDir(RLCD_FONTS_DIR)) {
+        fprintf(stderr, "[sim] 字库加载失败，检查 %s 下是否有 ui_font_*.bin"
+                        "（先跑 tools/gen_font.sh）\n", RLCD_FONTS_DIR);
+    }
     sim_tick_data();
     ui_pages_create();
     ui_pages_apply_locked();

@@ -16,6 +16,7 @@
 #include "net_bsp.h"
 #include "ui_home.h"
 #include "ui_pages.h"
+#include "ui_font.h"
 #include "button_bsp.h"
 #include "sdcard_bsp.h"
 
@@ -61,6 +62,14 @@ extern "C" void app_main(void)
     // 3. 显示
     RlcdPort.RLCD_Init();
     Lvgl_PortInit(LCD_WIDTH, LCD_HEIGHT, lvgl_flush_cb);
+
+    // 3.5 字库：挂 fonts 分区（SPIFFS）+ 加载 3 份 binfont。
+    //     必须在 Lvgl_PortInit 之后（lv_binfont_create 依赖 lv_fs），
+    //     且在 ui_pages_create 之前（建树时要用字体）。
+    UiFont_MountFs();
+    if (UiFont_Load() != ESP_OK) {
+        ESP_LOGE(TAG, "字库加载失败 —— UI 汉字将回落到内置字体；请确认已烧 fonts 分区");
+    }
 
     if (Lvgl_lock(-1)) {
         ui_pages_create();          // 建所有页面，默认激活主页

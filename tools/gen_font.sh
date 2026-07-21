@@ -1,11 +1,16 @@
 #!/usr/bin/env bash
-# 用 lv_font_conv 从系统 TTF 生成 3 份 LVGL 字模：
-#   - ui_font_cjk_16_gen.c    ：CJK 16px（标签、日期、天气文字）
-#   - ui_font_digit_big_gen.c ：粗体数字 96px（HH:MM 大时钟）
-#   - ui_font_digit_mid_gen.c ：粗体数字 28px（卡片数值 24℃ / 68% 等）
+# 用 lv_font_conv 从系统 TTF 生成 3 份 LVGL 字模。
+#
+# 输出：**LVGL binfont 二进制**（.bin），落到 partitions/fonts/。
+# 通过 CMake 里的 spiffs_create_partition_image() 打包成 SPIFFS 镜像烧进
+# fonts 分区（2 MB）。运行时 ui_font.c 用 lv_binfont_create("A:/spiffs/xxx.bin")
+# 读取。加字只需：改本脚本 → 重跑 → `idf.py flash fonts`（只烧 2MB 分区，不动 app）。
 #
 # 依赖：node + `npm install -g lv_font_conv`
-# 新增字：改本脚本里的 CJK_RANGES，然后重跑。
+#
+# 字符集：
+#   - ASCII 0x20-0x7F + °(0xB0) + ×(0xD7) + ℃(0x2103) + 箭头(0x2190-0x2193)
+#   - CJK：GB2312 一级 3755 汉字（区位 16-55）+ 常用标点符号（0x3000-0x301F 等）
 set -e
 cd "$(dirname "$0")/.."
 
@@ -19,35 +24,97 @@ for f in "$FONT_CJK" "$FONT_ASCII" "$FONT_BOLD"; do
     fi
 done
 
-OUT_DIR="components/ui/src"
+OUT_DIR="partitions/fonts"
+mkdir -p "$OUT_DIR"
 
-# ---------- 1. CJK 16px ----------
-# 所有屏幕出现的汉字 Unicode 全列表（含系统信息页 4 张卡片所有中文）
-CJK_RANGES="-r 0x6E29 -r 0x5EA6 -r 0x6E7F -r 0x7CFB -r 0x7EDF -r 0x4FE1 -r 0x606F -r 0x7F51 -r 0x7EDC -r 0x4F4D -r 0x7F6E -r 0x56FA -r 0x4EF6 -r 0x57CE -r 0x5E02 -r 0x5929 -r 0x6C14 -r 0x5B58 -r 0x50A8 -r 0x7248 -r 0x672C -r 0x540D -r 0x79F0 -r 0x4F20 -r 0x611F -r 0x5668 -r 0x8FD0 -r 0x884C -r 0x65F6 -r 0x95F4 -r 0x672A -r 0x8FDE -r 0x63A5 -r 0x65E0 -r 0x6570 -r 0x636E -r 0x591A -r 0x4E91 -r 0x6674 -r 0x9634 -r 0x96E8 -r 0x96EA -r 0x96F7 -r 0x96FE -r 0x973E -r 0x98CE -r 0x6C99 -r 0x5317 -r 0x4EAC -r 0x4E0A -r 0x6D77 -r 0x5E7F -r 0x5DDE -r 0x6DF1 -r 0x5733 -r 0x82CF -r 0x5357 -r 0x5B81 -r 0x676D -r 0x6210 -r 0x90FD -r 0x6D25 -r 0x91CD -r 0x91CF -r 0x5E86 -r 0x6B66 -r 0x6C49 -r 0x77E5 -r 0x5BA4 -r 0x5185 -r 0x5916 -r 0x65E5 -r 0x671F -r 0x661F -r 0x5468 -r 0x4E00 -r 0x4E8C -r 0x4E09 -r 0x56DB -r 0x4E94 -r 0x516D -r 0x6B63 -r 0x5728 -r 0x914D -r 0x5931 -r 0x8D25 -r 0x73AF -r 0x5883 -r 0x53C2 -r 0x8BBE -r 0x5907 -r 0x82AF -r 0x7247 -r 0x72B6 -r 0x6001 -r 0x66F4 -r 0x65B0 -r 0x957F -r 0x540C -r 0x6B65 -r 0x9053 -r 0x5F53 -r 0x524D -r 0x8BFB -r 0x5E38 -r 0x6545 -r 0x969C -r 0x5730 -r 0x5740 -r 0x8BE6 -r 0x60C5 -r 0x7A7A -r 0x538B -r 0x80FD -r 0x89C1 -r 0x5411 -r 0x901F -r 0x7D2B -r 0x7EBF -r 0x4ECA -r 0x6700 -r 0x4F4E -r 0x9AD8 -r 0x51FA -r 0x843D -r 0x4E1C -r 0x897F -r 0x4F53 -r 0x7167 -r 0x63D0 -r 0x793A -r 0x8BF7 -r 0x624B -r 0x673A -r 0x626B -r 0x63CF -r 0x6D4F -r 0x89C8 -r 0x6253 -r 0x5F00 -r 0x8BBF -r 0x95EE -r 0x5E74 -r 0x6708 -r 0xFF1A -r 0x90D1 -r 0x9633 -r 0x7F57 -r 0x5C71"
+# ---------- 字符集范围 ----------
+# GB2312 一级汉字：区位 16-55（每区 94 字，共 3755 字），Unicode 分布：
+#   最简做法：直接指定连续的 Unicode 区间 0x4E00-0x9FA5（CJK Unified Ideographs
+#   基本区）—— 但那有 20902 字，> 2MB 分区放不下（约 2.4MB）。
+#   所以走 GB2312 精确列表：从 python 生成一次范围表，写死在这里。
+#
+# 常用标点（拆到 CJK 字体 vs 拉丁字体 —— 拉丁标点走 DejaVu，CJK 全角标点走 Droid）：
+#   拉丁标点（ASCII 之外的常见）—— DejaVu 有
+#     0x00B7           ·
+#     0x2010-0x2015    ‐-‒–—―
+#     0x2018-0x201F    ''‚‛""„‟
+#     0x2022-0x2026    •‣․‥…
+#     0x2030-0x2033    ‰′″‴
+#     0x2039-0x203A    ‹›
+#   CJK 全角标点 —— Droid 有
+#     0x3000-0x301F    ideographic space、。〃〄〆〇〈〉《》「」『』【】等
+#     0xFF00-0xFFEF    全角 ASCII + 全角标点（！？：；，。等）
+LATIN_PUNCT_RANGES="\
+-r 0x00B7-0x00B7 \
+-r 0x2010-0x2015 \
+-r 0x2018-0x201F \
+-r 0x2022-0x2026 \
+-r 0x2030-0x2033 \
+-r 0x2039-0x203A \
+"
+CJK_PUNCT_RANGES="\
+-r 0x3000-0x301F \
+-r 0xFF00-0xFFEF \
+"
 
+# GB2312 一级汉字 Unicode 精确列表（16-55 区，共 3755 字）
+# 生成方式（参考）：
+#   python -c "for r in range(0x10,0x38):
+#     for c in range(0x21,0x7F):
+#       gb=bytes([r+0xA0,c+0xA0]); print(hex(int.from_bytes(gb.decode('gb2312').encode('utf-16-be'),'big')))"
+# —— 但一级字实际范围就是 0xB0A1..0xD7F9（GB2312 编码），对应 Unicode 的分布不连续。
+# 为了让脚本自包含，这里直接内联 Python，生成一次时映射写到临时文件。
+GB1_TMP=$(mktemp)
+python3 - "$GB1_TMP" <<'PY'
+import sys, os
+out = sys.argv[1]
+# GB2312 一级字：编码从 0xB0A1 到 0xD7F9，共 3755 个（跳过 0xxx7F 保留）
+codepoints = set()
+for row in range(0xB0, 0xD8):        # 高字节
+    for col in range(0xA1, 0xFF):    # 低字节
+        gb = bytes([row, col])
+        try:
+            ch = gb.decode('gb2312')
+        except UnicodeDecodeError:
+            continue
+        codepoints.add(ord(ch))
+        if len(codepoints) >= 3755:
+            break
+# 用 lv_font_conv 的 -r 0xNNNN 逐字符列出，能被 shell 一行传下去
+with open(out, 'w') as f:
+    f.write(' '.join(f'-r 0x{cp:04X}' for cp in sorted(codepoints)))
+PY
+GB1_RANGES=$(cat "$GB1_TMP")
+rm -f "$GB1_TMP"
+
+# ---------- 1. CJK 16px（主字库）----------
+echo "生成 CJK 16px 字库（GB2312 一级 3755 + 标点，可能需要 10 秒左右）…"
 lv_font_conv \
-    --font "$FONT_ASCII" -r 0x20-0x7F -r 0xB0-0xB0 -r 0xD7-0xD7 -r 0x2103-0x2103 -r 0x2190-0x2193 \
-    --font "$FONT_CJK" $CJK_RANGES \
-    --size 16 --bpp 1 --format lvgl \
-    --lv-font-name ui_font_cjk_16_gen \
+    --font "$FONT_ASCII" -r 0x20-0x7F -r 0xB0-0xB0 -r 0xD7-0xD7 -r 0x2103-0x2103 -r 0x2190-0x2193 $LATIN_PUNCT_RANGES \
+    --font "$FONT_CJK" $CJK_PUNCT_RANGES $GB1_RANGES \
+    --size 16 --bpp 1 --format bin \
     --no-compress \
-    -o "$OUT_DIR/ui_font_cjk_16_gen.c"
-echo "generated $OUT_DIR/ui_font_cjk_16_gen.c"
+    -o "$OUT_DIR/ui_font_cjk_16.bin"
+echo "生成 $OUT_DIR/ui_font_cjk_16.bin ($(stat -c%s $OUT_DIR/ui_font_cjk_16.bin) bytes)"
 
 # ---------- 2. 大数字 96px（时钟 HH:MM）----------
 lv_font_conv \
     --font "$FONT_BOLD" -r 0x20-0x20 -r 0x30-0x3A \
-    --size 96 --bpp 1 --format lvgl \
-    --lv-font-name ui_font_digit_big_gen \
+    --size 96 --bpp 1 --format bin \
     --no-compress \
-    -o "$OUT_DIR/ui_font_digit_big_gen.c"
-echo "generated $OUT_DIR/ui_font_digit_big_gen.c"
+    -o "$OUT_DIR/ui_font_digit_big.bin"
+echo "生成 $OUT_DIR/ui_font_digit_big.bin ($(stat -c%s $OUT_DIR/ui_font_digit_big.bin) bytes)"
 
 # ---------- 3. 中数字 28px（卡片数值）----------
 lv_font_conv \
     --font "$FONT_BOLD" -r 0x25-0x25 -r 0x30-0x39 -r 0xB0-0xB0 -r 0x2103-0x2103 \
-    --size 28 --bpp 1 --format lvgl \
-    --lv-font-name ui_font_digit_mid_gen \
+    --size 28 --bpp 1 --format bin \
     --no-compress \
-    -o "$OUT_DIR/ui_font_digit_mid_gen.c"
-echo "generated $OUT_DIR/ui_font_digit_mid_gen.c"
+    -o "$OUT_DIR/ui_font_digit_mid.bin"
+echo "生成 $OUT_DIR/ui_font_digit_mid.bin ($(stat -c%s $OUT_DIR/ui_font_digit_mid.bin) bytes)"
+
+TOTAL=$(du -sb "$OUT_DIR" | cut -f1)
+echo ""
+echo "字库目录总大小：$TOTAL bytes（分区上限 2 MiB = 2097152 bytes）"
+echo "下一步：cd 到项目根 → idf.py build → idf.py flash（或 idf.py -p /dev/ttyUSB0 flash）"
+echo "以后只想更新字库不动 app：idf.py -p /dev/ttyUSB0 -a flash-fonts"

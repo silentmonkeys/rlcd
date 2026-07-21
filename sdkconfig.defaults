@@ -46,3 +46,8 @@ CONFIG_LV_FONT_MONTSERRAT_28=y
 
 # 关闭串口日志颜色 (不影响)
 CONFIG_LOG_COLORS=n
+
+# 字库放在 SPIFFS fonts 分区，运行时 lv_binfont_create 走 POSIX FS 驱动读文件
+# 盘符用 'A'，路径为 "A:/spiffs/ui_font_cjk_16.bin"
+CONFIG_LV_USE_FS_POSIX=y
+CONFIG_LV_FS_POSIX_LETTER='A'

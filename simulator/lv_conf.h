@@ -35,6 +35,13 @@
 
 #define LV_USE_FONT_COMPRESSED  0
 
+// binfont 加载器由 lv_binfont_create() 直接提供（v9 无需单独开关）。
+// POSIX 文件系统驱动 —— 模拟器和真机一样从 partitions/fonts/ 里的 .bin
+// 加载字库，保证像素一致。盘符 'A'，路径 "A:/绝对路径/xxx.bin"。
+#define LV_USE_FS_POSIX         1
+#define LV_FS_POSIX_LETTER      'A'
+#define LV_FS_POSIX_PATH        ""
+
 // tick 通过我们在 main.c 里调用 lv_tick_inc 手工推进
 #define LV_TICK_CUSTOM        0
 

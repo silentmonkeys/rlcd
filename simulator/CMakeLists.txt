@@ -43,10 +43,11 @@ add_executable(rlcd_sim
     ${UI_DIR}/src/ui_pages.c
     ${UI_DIR}/src/lcd_clock.c
     ${UI_DIR}/src/ui_font.c
-    ${UI_DIR}/src/ui_font_cjk_16_gen.c
-    ${UI_DIR}/src/ui_font_digit_big_gen.c
-    ${UI_DIR}/src/ui_font_digit_mid_gen.c
 )
+
+# 字库目录（partitions/fonts/*.bin）路径传给模拟器，运行时 lv_binfont_create 读它
+target_compile_definitions(rlcd_sim PRIVATE
+    RLCD_FONTS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../partitions/fonts")
 
 target_include_directories(rlcd_sim PRIVATE
     ${UI_DIR}/include
