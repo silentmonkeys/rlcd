@@ -174,7 +174,7 @@ static void tick_task(void *arg)
 //   * 时间用系统本地时间：SNTP 未同步前是 1970-01-01，写出的行也认；等联网 SNTP
 //     校时后自然会切到真实时间。
 // ============================================================================
-#define CSV_LOG_PATH   "/sdcard/rlcd_log.csv"
+#define CSV_LOG_PATH   RLCD_DATA_DIR "/weather_log.csv"
 #define CSV_HEADER     "timestamp,indoor_temp,indoor_humi,outdoor_temp,outdoor_humi,weather,city,wifi_rssi\n"
 #define CSV_LOG_PERIOD_MS   (10 * 60 * 1000)
 
@@ -195,6 +195,7 @@ static void csv_log_append_once(const ui_model_t *m)
     struct stat st;
     bool need_header = (stat(CSV_LOG_PATH, &st) != 0);
 
+    mkdir(RLCD_DATA_DIR, 0777);   // 确保数据目录存在（已存在无害）
     FILE *f = fopen(CSV_LOG_PATH, "a");
     if (!f) {
         ESP_LOGW(TAG, "csv_log: fopen 失败（SD 空间满 / 只读？）");

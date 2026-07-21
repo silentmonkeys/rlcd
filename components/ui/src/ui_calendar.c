@@ -46,6 +46,11 @@
 // 最大标注日期数
 #define MAX_MARK_DATES  32
 
+// 底部标签相关上限
+#define MAX_EVENTS       16     // 预定内容条数
+#define MAX_LABELS       16     // 随机预设标签条数
+#define EVENT_TEXT_MAX   32     // 单条预定/标签文字最大字节数（含结尾 0）
+
 // -------- 页面私有状态 -------------------------------------------
 static lv_obj_t *s_screen = NULL;
 static lv_obj_t *lbl_title;
@@ -53,10 +58,20 @@ static ui_status_bar_t *s_bar;        // 状态栏（动态刷新）
 static lv_obj_t *lbl_wday[7];         // 周日～周六表头
 static lv_obj_t *lbl_day[6][7];       // 6行×7列日期
 static char s_title[32];
+static lv_obj_t *lbl_footer;          // 底部标签（预定 / 随机预设文字）
 
 // 控制台标注日期列表（格式 MMDD 整数，如 1001 = 10月1日）
 static uint16_t s_mark_dates[MAX_MARK_DATES];
 static int s_mark_count = 0;
+
+// 预定内容：某天固定显示的自定义文字（date=MMDD → text）
+static uint16_t s_event_dates[MAX_EVENTS];
+static char     s_event_texts[MAX_EVENTS][EVENT_TEXT_MAX];
+static int      s_event_count = 0;
+
+// 随机预设标签池：无当天预定时，按日期做种子固定选一条
+static char     s_labels[MAX_LABELS][EVENT_TEXT_MAX];
+static int      s_label_count = 0;
 
 // 内置节假日表（简化，格式 MMDD，不含年份）
 static const uint16_t HOLIDAYS[] = {
@@ -108,6 +123,95 @@ void ui_calendar_mark_date(const char *mmdd)
     if (s_mark_count < MAX_MARK_DATES) {
         s_mark_dates[s_mark_count++] = md;
     }
+}
+
+// 后台批量设置标注日期（覆盖现有列表）。格式 "MM-DD,MM-DD,..."。
+void ui_calendar_set_marks(const char *csv)
+{
+    s_mark_count = 0;
+    if (!csv || !csv[0]) return;
+    const char *p = csv;
+    while (*p && s_mark_count < MAX_MARK_DATES) {
+        int m = 0, d = 0;
+        if (sscanf(p, "%d-%d", &m, &d) == 2 &&
+            m >= 1 && m <= 12 && d >= 1 && d <= 31) {
+            uint16_t md = (uint16_t)(m * 100 + d);
+            // 去重
+            int dup = 0;
+            for (int i = 0; i < s_mark_count; i++) {
+                if (s_mark_dates[i] == md) { dup = 1; break; }
+            }
+            if (!dup) s_mark_dates[s_mark_count++] = md;
+        }
+        // 跳到下一个逗号之后
+        const char *comma = strchr(p, ',');
+        if (!comma) break;
+        p = comma + 1;
+    }
+}
+
+// 从 [start, end) 复制文字到 dst（去首尾空格，截断到 max-1 字节，末尾补 0）
+static void copy_trimmed(char *dst, size_t max, const char *start, const char *end)
+{
+    while (start < end && (*start == ' ' || *start == '\t')) start++;
+    while (end > start && (end[-1] == ' ' || end[-1] == '\t' ||
+                           end[-1] == '\r' || end[-1] == '\n')) end--;
+    size_t n = (size_t)(end - start);
+    if (n >= max) n = max - 1;
+    memcpy(dst, start, n);
+    dst[n] = 0;
+}
+
+// 后台设置预定内容。格式 "MM-DD=内容;MM-DD=内容;..."。
+void ui_calendar_set_events(const char *spec)
+{
+    s_event_count = 0;
+    if (!spec || !spec[0]) return;
+    const char *p = spec;
+    while (*p && s_event_count < MAX_EVENTS) {
+        // 一段 = 到 ';' 或串尾
+        const char *seg_end = strchr(p, ';');
+        const char *stop = seg_end ? seg_end : (p + strlen(p));
+        const char *eq = memchr(p, '=', (size_t)(stop - p));
+        if (eq) {
+            int m = 0, d = 0;
+            if (sscanf(p, "%d-%d", &m, &d) == 2 &&
+                m >= 1 && m <= 12 && d >= 1 && d <= 31) {
+                s_event_dates[s_event_count] = (uint16_t)(m * 100 + d);
+                copy_trimmed(s_event_texts[s_event_count],
+                             EVENT_TEXT_MAX, eq + 1, stop);
+                if (s_event_texts[s_event_count][0]) s_event_count++;
+            }
+        }
+        if (!seg_end) break;
+        p = seg_end + 1;
+    }
+}
+
+// 后台设置随机预设标签池。格式 "文字1;文字2;文字3"。
+void ui_calendar_set_labels(const char *spec)
+{
+    s_label_count = 0;
+    if (!spec || !spec[0]) return;
+    const char *p = spec;
+    while (*p && s_label_count < MAX_LABELS) {
+        const char *seg_end = strchr(p, ';');
+        const char *stop = seg_end ? seg_end : (p + strlen(p));
+        copy_trimmed(s_labels[s_label_count], EVENT_TEXT_MAX, p, stop);
+        if (s_labels[s_label_count][0]) s_label_count++;
+        if (!seg_end) break;
+        p = seg_end + 1;
+    }
+}
+
+// 查找某天的预定内容，返回文字指针；无则 NULL。
+static const char *event_for(int month, int day)
+{
+    uint16_t md = (uint16_t)(month * 100 + day);
+    for (int i = 0; i < s_event_count; i++) {
+        if (s_event_dates[i] == md) return s_event_texts[i];
+    }
+    return NULL;
 }
 
 // 计算当月第一天是星期几（0=周日，1=周一...）—— Zeller's congruence 变体
@@ -180,6 +284,11 @@ lv_obj_t *ui_calendar_create(void)
             lv_obj_set_style_pad_ver(lbl_day[r][c], 2, 0);
         }
     }
+
+    // 底部标签（预定 / 随机预设文字）—— 居中，横线上方
+    lbl_footer = ui_make_label(s_screen, ui_font_cjk_16(), 0, 256, "");
+    lv_obj_set_width(lbl_footer, 400);
+    lv_obj_set_style_text_align(lbl_footer, LV_TEXT_ALIGN_CENTER, 0);
 
     ui_calendar_apply_locked();
     return s_screen;
@@ -259,4 +368,13 @@ void ui_calendar_apply_locked(void)
             day++;
         }
     }
+
+    // ---- 底部标签：预定优先，否则随机 ----
+    const char *footer_text = event_for(month, today);
+    if (!footer_text && s_label_count > 0) {
+        // 按日期做种子固定选一条（同一天不变，跨天才换）
+        int idx = (year * 10000 + month * 100 + today) % s_label_count;
+        footer_text = s_labels[idx];
+    }
+    lv_label_set_text(lbl_footer, footer_text ? footer_text : "");
 }

@@ -35,6 +35,10 @@ bool      SdcardBsp_ProbeAndRemount(void);
 // 挂载点 —— 固定 "/sdcard"，方便上层拼路径
 #define SDCARD_MOUNT_POINT   "/sdcard"
 
+// RLCD 专用数据目录 —— 日历配置、天气日志等都存这里，避免污染卡根目录。
+// 写文件前先 mkdir(RLCD_DATA_DIR, 0777)（已存在返回 EEXIST，无害）。
+#define RLCD_DATA_DIR        "/sdcard/rlcd"
+
 #ifdef __cplusplus
 }
 #endif

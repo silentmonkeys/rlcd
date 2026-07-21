@@ -16,6 +16,19 @@ void ui_calendar_apply_locked(void);
 // 控制台命令：标注日期（格式 MM-DD，如 "10-01"，传 NULL 清除所有标注）
 void ui_calendar_mark_date(const char *mmdd);
 
+// 后台批量设置标注日期（覆盖现有列表）。
+// 格式："MM-DD,MM-DD,..."，如 "10-01,05-01,02-14"。传 NULL / "" 清空。
+void ui_calendar_set_marks(const char *csv);
+
+// 后台设置"预定内容"：指定日期显示自定义文字（优先级高于随机预设标签）。
+// 格式："MM-DD=内容;MM-DD=内容;..."，如 "01-01=元旦快乐;02-14=情人节"。
+// 传 NULL / "" 清空。
+void ui_calendar_set_events(const char *spec);
+
+// 后台设置底部随机预设标签池。无当天预定时，按日期做种子固定选一条显示
+//（同一天不变，跨天才换）。格式："文字1;文字2;文字3"。传 NULL / "" 清空。
+void ui_calendar_set_labels(const char *spec);
+
 #ifdef __cplusplus
 }
 #endif

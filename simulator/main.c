@@ -188,12 +188,24 @@ static void *stdin_cmd_thread(void *arg)
     (void)arg;
     char line[128];
     fprintf(stderr, "[console] commands: 'mark MM-DD'  |  'unmark'  |  'page N' (0=home,1=weather,2=calendar,3=device)\n");
+    fprintf(stderr, "[console]   'marks CSV'   如 marks 01-01,10-01\n");
+    fprintf(stderr, "[console]   'events SPEC' 如 events 01-01=元旦;02-14=情人节\n");
+    fprintf(stderr, "[console]   'labels SPEC' 如 labels 加油;好好吃饭;早点睡\n");
     while (fgets(line, sizeof(line), stdin)) {
         // 去尾部换行
         line[strcspn(line, "\r\n")] = 0;
         if (strncmp(line, "mark ", 5) == 0) {
             ui_calendar_mark_date(line + 5);
             fprintf(stderr, "[console] marked %s\n", line + 5);
+        } else if (strncmp(line, "marks ", 6) == 0) {
+            ui_calendar_set_marks(line + 6);
+            fprintf(stderr, "[console] set marks: %s\n", line + 6);
+        } else if (strncmp(line, "events ", 7) == 0) {
+            ui_calendar_set_events(line + 7);
+            fprintf(stderr, "[console] set events: %s\n", line + 7);
+        } else if (strncmp(line, "labels ", 7) == 0) {
+            ui_calendar_set_labels(line + 7);
+            fprintf(stderr, "[console] set labels: %s\n", line + 7);
         } else if (strcmp(line, "unmark") == 0 || strcmp(line, "clear") == 0) {
             ui_calendar_mark_date(NULL);
             fprintf(stderr, "[console] cleared marks\n");
@@ -264,6 +276,10 @@ int main(int argc, char **argv)
         fprintf(stderr, "[sim] 字库加载失败，检查 %s 下是否有 ui_font_*.bin"
                         "（先跑 tools/gen_font.sh）\n", RLCD_FONTS_DIR);
     }
+    // 日历页 demo 数据：标注、预定、随机标签
+    ui_calendar_set_marks(  "01-01,10-01,12-25");
+    ui_calendar_set_events( "01-01=元旦快乐;02-14=情人节;10-01=国庆节");
+    ui_calendar_set_labels( "今天也要加油;好好吃饭;早点睡;保持微笑;多喝热水");
     sim_tick_data();
     ui_pages_create();
     ui_pages_apply_locked();

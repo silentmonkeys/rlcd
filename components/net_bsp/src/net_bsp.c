@@ -23,6 +23,7 @@
 #include "ui_model.h"
 #include "ui_home.h"
 #include "ui_pages.h"
+#include "ui_calendar.h"
 #include "lvgl_bsp.h"
 #include "user_config.h"
 
@@ -125,6 +126,96 @@ void NetBsp_ForgetWifi(void)
     nvs_erase_key(nh, "pass");
     nvs_commit(nh);
     nvs_close(nh);
+}
+
+// ------------ 日历配置：存 SD 卡 /sdcard/rlcd/calendar.conf --------------
+// 不写 NVS/flash，改存 SD，保存后不重启。文件按行存，每行一条：
+//   M <MM-DD>          标注日期
+//   E <MM-DD>=<内容>   预定内容
+//   L <文字>           随机标签
+// 无 SD 时禁止写入（web 侧也会拒绝）。
+#define CAL_DIR        "/sdcard/rlcd"
+#define CAL_FILE       "/sdcard/rlcd/calendar.conf"
+
+// 读 SD 上的日历文件，拆成三段字符串（原有 setter 格式）。
+//   marks:  "MM-DD,..."     events: "MM-DD=内容;..."     labels: "文字;..."
+// 三个缓冲各自会被清空后填充。SD 未挂载 / 文件不存在 → 三段均为空，返回 false。
+static bool cal_read_file(char *marks, size_t nm, char *events, size_t ne,
+                          char *labels, size_t nl)
+{
+    marks[0] = events[0] = labels[0] = 0;
+    if (!ui_model_get()->sd_mounted) return false;
+    FILE *f = fopen(CAL_FILE, "r");
+    if (!f) return false;
+
+    char line[160];
+    while (fgets(line, sizeof(line), f)) {
+        line[strcspn(line, "\r\n")] = 0;
+        if (line[0] == 0) continue;
+        char tag = line[0];
+        const char *val = line + 1;
+        while (*val == ' ') val++;
+        if (tag == 'M') {
+            if (marks[0]) strncat(marks, ",", nm - strlen(marks) - 1);
+            strncat(marks, val, nm - strlen(marks) - 1);
+        } else if (tag == 'E') {
+            if (events[0]) strncat(events, ";", ne - strlen(events) - 1);
+            strncat(events, val, ne - strlen(events) - 1);
+        } else if (tag == 'L') {
+            if (labels[0]) strncat(labels, ";", nl - strlen(labels) - 1);
+            strncat(labels, val, nl - strlen(labels) - 1);
+        }
+    }
+    fclose(f);
+    return true;
+}
+
+// 从 SD 加载日历配置并推入 UI。SD 未挂载 / 文件不存在 → 静默（UI 保持空）。
+static void cal_load_from_sd(void)
+{
+    static char marks[128], events[512], labels[512];
+    if (!cal_read_file(marks, sizeof(marks), events, sizeof(events),
+                       labels, sizeof(labels))) {
+        ESP_LOGI(TAG, "cal: 无 SD 或文件不存在，日历配置为空");
+        return;
+    }
+    if (Lvgl_lock(200)) {
+        ui_calendar_set_marks(marks);
+        ui_calendar_set_events(events);
+        ui_calendar_set_labels(labels);
+        ui_pages_apply_locked();
+        Lvgl_unlock();
+    }
+    ESP_LOGI(TAG, "cal: 已加载 marks='%s' events='%s' labels='%s'", marks, events, labels);
+}
+
+// 把三段字符串写回 SD 文件。成功返回 true。SD 未挂载返回 false。
+// marks: "MM-DD,..."；events: "MM-DD=内容;..."；labels: "文字;..."
+static bool cal_save_to_sd(const char *marks, const char *events, const char *labels)
+{
+    if (!ui_model_get()->sd_mounted) return false;
+    mkdir(CAL_DIR, 0777);   // 确保目录存在（已存在无害）
+    FILE *f = fopen(CAL_FILE, "w");
+    if (!f) {
+        ESP_LOGW(TAG, "cal: 写 %s 失败（SD 只读/满？）", CAL_FILE);
+        return false;
+    }
+    // 逐条拆分写行 —— 用局部拷贝做 strtok
+    char buf[512];
+    if (marks && marks[0]) {
+        strncpy(buf, marks, sizeof(buf) - 1); buf[sizeof(buf) - 1] = 0;
+        for (char *t = strtok(buf, ","); t; t = strtok(NULL, ",")) fprintf(f, "M %s\n", t);
+    }
+    if (events && events[0]) {
+        strncpy(buf, events, sizeof(buf) - 1); buf[sizeof(buf) - 1] = 0;
+        for (char *t = strtok(buf, ";"); t; t = strtok(NULL, ";")) fprintf(f, "E %s\n", t);
+    }
+    if (labels && labels[0]) {
+        strncpy(buf, labels, sizeof(buf) - 1); buf[sizeof(buf) - 1] = 0;
+        for (char *t = strtok(buf, ";"); t; t = strtok(NULL, ";")) fprintf(f, "L %s\n", t);
+    }
+    fclose(f);
+    return true;
 }
 
 // ------------ SNTP 校时 ----------------------------------------------
@@ -234,61 +325,184 @@ static void wifi_common_init(void)
 }
 
 // ------------ 配置门户 HTML/JS --------------------------------------
-// 页面结构：<顶部：扫描按钮 + 列表> + <表单>；JS 里 fetch('/scan') 解析 JSON 填列表。
-// 用 %s 占位符做 snprintf；`{{ }}` 里的花括号在 C 字符串里成对写。
+// 页面结构：顶部通用（WiFi 扫描）+ 双标签页（网络 / 日历）；每条配置逐条增删。
+// JS 提交前把列表项编码成后端的 CSV / 分号格式，后端 NVS 代码完全不变。
 static const char PAGE_TEMPLATE[] =
 "<!doctype html><html><head><meta charset=utf-8>"
 "<meta name=viewport content='width=device-width,initial-scale=1'>"
 "<title>RLCD Setup</title>"
 "<style>"
 "body{font-family:sans-serif;max-width:440px;margin:20px auto;padding:0 12px}"
-"input,select,button{width:100%%;padding:8px;margin:4px 0 12px;box-sizing:border-box;font-size:15px}"
-"label{font-weight:bold}"
-"button{padding:10px;font-size:16px}"
+"input,select,button{width:100%%;padding:8px;margin:4px 0;box-sizing:border-box;font-size:15px}"
+"label{font-weight:bold;display:block;margin:12px 0 4px}"
+".btn{padding:10px;font-size:16px}"
+".btn.sm{padding:6px 10px;font-size:14px;width:auto}"
 ".scan{border:1px solid #ccc;border-radius:6px;max-height:180px;overflow:auto;margin-bottom:12px}"
 ".scan .row{padding:8px 12px;border-bottom:1px solid #eee;cursor:pointer;display:flex;justify-content:space-between}"
 ".scan .row:hover{background:#f2f7ff}"
 ".scan .row:last-child{border-bottom:none}"
 ".lock{color:#888;font-size:12px}"
 ".hint{color:#888;font-size:12px}"
+/* 标签页 */
+".tabs{display:flex;border-bottom:2px solid #eee;margin-bottom:16px}"
+".tab{padding:8px 16px;cursor:pointer;opacity:.5}"
+".tab.active{opacity:1;border-bottom:2px solid #000}"
+".page{display:none}"
+".page.active{display:block}"
+/* 已添加条目：一行 flex，内容占满，删除按钮固定窄 */
+".item{display:flex;align-items:center;gap:8px;margin:6px 0;padding:6px 10px;"
+      "background:#f6f6f6;border-radius:6px}"
+".item .txt{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}"
+".item .x{flex:none;width:32px;padding:4px 0;font-size:16px;line-height:1;color:#c00;"
+         "background:none;border:1px solid #ddd;border-radius:6px;cursor:pointer}"
+/* 添加行：输入占满，按钮固定窄 */
+".add{display:flex;gap:8px;align-items:center;margin:6px 0}"
+".add input{flex:1;min-width:0;margin:0}"
+".add .plus{flex:none;width:64px;margin:0;padding:8px 0}"
+".toggle{display:flex;align-items:center;gap:8px;margin:14px 0}"
+".toggle input{width:auto;margin:0}"
+".disabled{opacity:.4;pointer-events:none}"
 "</style></head><body><h2>RLCD Setup</h2>"
 
+/* --- 标签页切换栏（放最上方） --- */
+"<div class=tabs>"
+"<div class=tab active onclick=\"showTab(0)\">网络与天气</div>"
+"<div class=tab onclick=\"showTab(1)\">日历页</div>"
+"</div>"
+
+/* ===== 第 0 页：网络与天气（独立 form，保存后重启） ===== */
+"<div id=p0 class=page active>"
 "<button type=button onclick=\"doScan()\">扫描附近 WiFi</button>"
 "<div id=scan class=scan style=\"display:none\"></div>"
-
 "<form method=POST action=/save>"
 "<label>WiFi SSID</label><input id=ssid name=ssid value='%s' maxlength=32 required>"
 "<label>WiFi Password</label><input name=pass type=password value='%s' maxlength=64>"
-"<label>City (for weather)</label><input name=city value='%s' maxlength=31 placeholder=新郑>"
-"<label>Weather Provider</label>"
-"<select name=provider>"
-"<option value=qweather selected>QWeather</option>"
-"</select>"
-"<label>QWeather API Key</label>"
-"<input name=apikey value='%s' maxlength=63>"
-"<label>QWeather API Host (仅和风天气用，如 xxx.re.qweatherapi.com)</label>"
+"<label>城市 (天气查询用)</label><input name=city value='%s' maxlength=31 placeholder=新郑>"
+"<label>天气 Provider</label>"
+"<select name=provider><option value=qweather selected>QWeather</option></select>"
+"<label>QWeather API Key</label><input name=apikey value='%s' maxlength=63>"
+"<label>QWeather API Host</label>"
 "<input name=host value='%s' maxlength=63 placeholder=xxx.re.qweatherapi.com>"
-"<button type=submit>Save &amp; Reboot</button></form>"
+"<button type=submit class=btn style=margin-top:20px>保存网络并重启</button>"
+"</form>"
+"<p class=hint>保存后设备会重启并加入所选 WiFi。ESP32-S3 只支持 2.4GHz。</p>"
+"</div>"
 
-"<p class=hint>Save 后设备会重启并加入你选的 WiFi。ESP32-S3 只支持 2.4GHz。</p>"
+/* ===== 第 1 页：日历页（存 SD 卡，保存后不重启） ===== */
+"<div id=p1 class=page>"
+"<div id=nosd class=hint style=\"color:#c00;display:none\">未检测到 SD 卡，无法保存日历数据。请插卡后刷新页面。</div>"
+"<div id=calbody>"
+/* 标记日期 */
+"<label>标记日期（日历上黑方块高亮）</label>"
+"<div id=marks></div>"
+"<div class=add>"
+"<input type=date id=new_mark>"
+"<button type=button class=\"btn plus\" onclick=\"addMark()\">添加</button>"
+"</div>"
+/* 预定内容 */
+"<hr><label>预定内容（当天底部固定显示的文字）</label>"
+"<div id=events></div>"
+"<div class=add>"
+"<input type=date id=evt_date style=flex:none;width:150px>"
+"<input type=text id=evt_text placeholder=内容文字 maxlength=28>"
+"<button type=button class=\"btn plus\" onclick=\"addEvent()\">添加</button>"
+"</div>"
+/* 随机标签 */
+"<hr>"
+"<div class=toggle>"
+"<input type=checkbox id=labels_on onchange=\"toggleLabels()\">"
+"<span>启用随机标签（无预定的日子，底部按日期轮选一条）</span>"
+"</div>"
+"<div id=labels_box style=display:none>"
+"<div id=labels></div>"
+"<div class=add>"
+"<input type=text id=new_label placeholder=标签文字 maxlength=28>"
+"<button type=button class=\"btn plus\" onclick=\"addLabel()\">添加</button>"
+"</div>"
+"</div>"
+"<button type=button class=btn style=margin-top:20px onclick=\"saveCal()\">保存日历（写入 SD，不重启）</button>"
+"<div id=calmsg class=hint style=margin-top:8px></div>"
+"</div>"  /* calbody */
+"</div>"  /* p1 */
 
 "<script>"
+"var SD_OK=%d;"
+"var INIT_MARKS='%s', INIT_EVENTS='%s', INIT_LABELS='%s';"
+"var marks=[], events=[], labels=[];"
+"function $(id){return document.getElementById(id);}"
+"function showTab(n){"
+"  document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('active',i==n));"
+"  document.querySelectorAll('.page').forEach((p,i)=>p.classList.toggle('active',i==n));"
+"}"
+"function esc(s){return (''+s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/'/g,'&#39;');}"
+/* 通用渲染：list + 取文本函数 → 每行 [内容][删除] */
+"function renderBox(id,items,txt){"
+"  $(id).innerHTML=items.map((it,i)=>"
+"    '<div class=item><span class=txt>'+esc(txt(it))+'</span>'+"
+"    '<button type=button class=x onclick=\"del(\\''+id+'\\','+i+')\">×</button></div>').join('');"
+"}"
+"function del(id,i){({marks:marks,events:events,labels:labels})[id].splice(i,1);renderAll();}"
+"function renderAll(){"
+"  renderBox('marks',marks,d=>d);"
+"  renderBox('events',events,e=>e.date+'  \\u2192  '+e.text);"
+"  renderBox('labels',labels,t=>t);"
+"}"
+"function fmtMMDD(d){return d?d.slice(5):'';}"
+"function addMark(){"
+"  var v=fmtMMDD($('new_mark').value);"
+"  if(!v||marks.indexOf(v)>=0)return;"
+"  marks.push(v);marks.sort();$('new_mark').value='';renderAll();"
+"}"
+"function addEvent(){"
+"  var d=fmtMMDD($('evt_date').value),t=$('evt_text').value.trim();"
+"  if(!d||!t)return;"
+"  for(var i=0;i<events.length;i++)if(events[i].date==d){events[i].text=t;renderAll();return;}"
+"  events.push({date:d,text:t});events.sort((a,b)=>a.date<b.date?-1:1);"
+"  $('evt_date').value='';$('evt_text').value='';renderAll();"
+"}"
+"function toggleLabels(){$('labels_box').style.display=$('labels_on').checked?'block':'none';}"
+"function addLabel(){"
+"  var v=$('new_label').value.trim();"
+"  if(!v||labels.indexOf(v)>=0)return;"
+"  labels.push(v);$('new_label').value='';renderAll();"
+"}"
+/* 日历 AJAX 保存到 /save_cal（写 SD，不重启） */
+"function saveCal(){"
+"  var fd=new URLSearchParams();"
+"  fd.append('cal_marks',marks.join(','));"
+"  fd.append('cal_events',events.map(e=>e.date+'='+e.text).join(';'));"
+"  fd.append('cal_labels',$('labels_on').checked?labels.join(';'):'');"
+"  var msg=$('calmsg');msg.style.color='#888';msg.textContent='保存中…';"
+"  fetch('/save_cal',{method:'POST',body:fd}).then(r=>r.text().then(t=>({ok:r.ok,t:t}))).then(o=>{"
+"    msg.style.color=o.ok?'#080':'#c00';msg.textContent=o.ok?'已保存到 SD 卡':('保存失败：'+o.t);"
+"  }).catch(e=>{msg.style.color='#c00';msg.textContent='请求失败：'+e;});"
+"}"
+/* 初始化：解析 INIT 字符串渲染 */
+"function parseMarks(s){return s?s.split(',').filter(x=>x.length>=5).sort():[];}"
+"function parseEvents(s){return s?s.split(';').filter(x=>x.indexOf('=')>0).map(p=>{"
+"  var i=p.indexOf('=');return {date:p.slice(0,i),text:p.slice(i+1)};"
+"}).sort((a,b)=>a.date<b.date?-1:1):[];}"
+"function parseLabels(s){return s?s.split(';').filter(x=>x.length>0):[];}"
+"marks=parseMarks(INIT_MARKS);events=parseEvents(INIT_EVENTS);labels=parseLabels(INIT_LABELS);"
+"$('labels_on').checked=INIT_LABELS.length>0;toggleLabels();renderAll();"
+/* 无 SD → 禁用日历编辑 */
+"if(!SD_OK){$('nosd').style.display='block';$('calbody').classList.add('disabled');}"
+/* WiFi 扫描 */
 "function doScan(){"
-"  var box=document.getElementById('scan');"
-"  box.style.display='block';"
+"  var box=$('scan');box.style.display='block';"
 "  box.innerHTML='<div class=row>扫描中…</div>';"
 "  fetch('/scan').then(r=>r.json()).then(list=>{"
 "    if(!list.length){box.innerHTML='<div class=row>未发现网络</div>';return;}"
 "    box.innerHTML=list.map(a=>{"
 "      var lock=a.auth?'🔒':'  ';"
 "      var bars=a.rssi>-55?'▂▄▆█':a.rssi>-70?'▂▄▆ ':a.rssi>-80?'▂▄  ':'▂   ';"
-"      var s=(''+a.ssid).replace(/</g,'&lt;').replace(/'/g,\"&#39;\");"
+"      var s=esc(a.ssid);"
 "      return \"<div class=row onclick=\\\"pick('\"+s+\"')\\\">\"+"
 "        \"<span>\"+lock+' '+s+\"</span><span class=lock>\"+bars+' '+a.rssi+\"dBm</span></div>\";"
 "    }).join('');"
 "  }).catch(e=>{box.innerHTML='<div class=row>扫描失败：'+e+'</div>';});"
 "}"
-"function pick(s){document.getElementById('ssid').value=s;}"
+"function pick(s){$('ssid').value=s;}"
 "</script>"
 
 "</body></html>";
@@ -330,15 +544,38 @@ static void parse_form_field(const char *body, const char *key, char *out, size_
     }
 }
 
+// 转义 JS 单引号字符串里的危险字符（' \ 换行）—— 用于 INIT_* 注入。
+static void js_escape(char *dst, size_t cap, const char *src)
+{
+    size_t w = 0;
+    for (const char *p = src; *p && w < cap - 2; p++) {
+        if (*p == '\'' || *p == '\\') { dst[w++] = '\\'; dst[w++] = *p; }
+        else if (*p == '\n' || *p == '\r') { continue; }
+        else dst[w++] = *p;
+    }
+    dst[w] = 0;
+}
+
 static esp_err_t root_get(httpd_req_t *req)
 {
-    // 页面 + JS，稍大，用 4KB
-    char *page = (char *) malloc(4096);
+    // 从 SD 读日历配置，拆成三段（无 SD → 三段为空）
+    static char cm[128], ce[512], cl[512];
+    cal_read_file(cm, sizeof(cm), ce, sizeof(ce), cl, sizeof(cl));
+    // JS 注入前转义
+    static char cm_js[160], ce_js[640], cl_js[640];
+    js_escape(cm_js, sizeof(cm_js), cm);
+    js_escape(ce_js, sizeof(ce_js), ce);
+    js_escape(cl_js, sizeof(cl_js), cl);
+    int sd_ok = ui_model_get()->sd_mounted ? 1 : 0;
+
+    // 页面含较多 JS（标签页 + 逐条增删逻辑），用 12KB 避免 snprintf 截断
+    char *page = (char *) malloc(12288);
     if (!page) return httpd_resp_send_500(req);
-    snprintf(page, 4096, PAGE_TEMPLATE,
+    snprintf(page, 12288, PAGE_TEMPLATE,
         s_cfg.ssid, s_cfg.pass, s_cfg.city,
         s_cfg.weather_apikey,
-        s_cfg.weather_host);
+        s_cfg.weather_host,
+        sd_ok, cm_js, ce_js, cl_js);
     httpd_resp_set_type(req, "text/html; charset=utf-8");
     httpd_resp_sendstr(req, page);
     free(page);
@@ -504,11 +741,56 @@ static esp_err_t save_post(httpd_req_t *req)
     return ESP_OK;
 }
 
+// POST /save_cal —— 日历数据（标记/预定/标签）存 SD 卡，立即应用，不重启。
+// 表单字段：cal_marks / cal_events / cal_labels（与旧格式一致，前端负责编码）。
+// 中文 URL 编码后体积约 3 倍，用 4KB 动态缓冲。SD 未挂载返回 409。
+static esp_err_t save_cal_post(httpd_req_t *req)
+{
+    char *body = (char *) malloc(4096);
+    if (!body) return httpd_resp_send_500(req);
+    int received = 0, r;
+    while (received < 4096 - 1) {
+        r = httpd_req_recv(req, body + received, 4096 - 1 - received);
+        if (r <= 0) break;
+        received += r;
+    }
+    body[received] = 0;
+
+    static char marks[128], events[512], labels[512];
+    parse_form_field(body, "cal_marks",  marks,  sizeof(marks));
+    parse_form_field(body, "cal_events", events, sizeof(events));
+    parse_form_field(body, "cal_labels", labels, sizeof(labels));
+    free(body);
+
+    if (!ui_model_get()->sd_mounted) {
+        httpd_resp_set_status(req, "409 Conflict");
+        httpd_resp_set_type(req, "text/plain; charset=utf-8");
+        httpd_resp_sendstr(req, "无 SD 卡，无法保存日历数据");
+        return ESP_OK;
+    }
+
+    bool ok = cal_save_to_sd(marks, events, labels);
+    if (ok && Lvgl_lock(200)) {
+        // 立即应用到 UI（不重启）
+        ui_calendar_set_marks(marks);
+        ui_calendar_set_events(events);
+        ui_calendar_set_labels(labels);
+        ui_pages_apply_locked();
+        Lvgl_unlock();
+    }
+    ESP_LOGI(TAG, "cal saved ok=%d marks='%s' events='%s' labels='%s'",
+             ok, marks, events, labels);
+
+    httpd_resp_set_type(req, "text/plain; charset=utf-8");
+    httpd_resp_sendstr(req, ok ? "OK" : "写 SD 失败");
+    return ESP_OK;
+}
+
 static void config_httpd_start(void)
 {
     if (s_httpd) return;
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
-    cfg.max_uri_handlers = 6;
+    cfg.max_uri_handlers = 8;
     cfg.stack_size       = 8 * 1024;   // JSON 生成 + snprintf 需要点栈
     // scan_get 阻塞 ~2-3s，把发送/接收 timeout 拉长避免浏览器提前断连
     cfg.recv_wait_timeout = 10;
@@ -517,9 +799,11 @@ static void config_httpd_start(void)
     httpd_uri_t u_root = { .uri = "/",     .method = HTTP_GET,  .handler = root_get };
     httpd_uri_t u_scan = { .uri = "/scan", .method = HTTP_GET,  .handler = scan_get };
     httpd_uri_t u_save = { .uri = "/save", .method = HTTP_POST, .handler = save_post };
+    httpd_uri_t u_cal  = { .uri = "/save_cal", .method = HTTP_POST, .handler = save_cal_post };
     httpd_register_uri_handler(s_httpd, &u_root);
     httpd_register_uri_handler(s_httpd, &u_scan);
     httpd_register_uri_handler(s_httpd, &u_save);
+    httpd_register_uri_handler(s_httpd, &u_cal);
 }
 
 // ------------ WiFi 启动 -----------------------------------------------
@@ -1006,6 +1290,8 @@ void NetBsp_Start(void)
     ESP_LOGI(TAG, "cfg loaded: host='%s' city='%s' apikey=%s",
              s_cfg.weather_host, s_cfg.city,
              s_cfg.weather_apikey[0] ? "set" : "EMPTY");
+    // 日历配置从 SD 卡加载并推入 UI（不再走 NVS）
+    cal_load_from_sd();
     s_wifi_events = xEventGroupCreate();
     if (!s_weather_events) s_weather_events = xEventGroupCreate();
     if (!s_scan_mux) s_scan_mux = xSemaphoreCreateMutex();
