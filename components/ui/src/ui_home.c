@@ -291,7 +291,7 @@ static weather_kind_t classify_weather(const char *t)
     if (strstr(t, "多云"))                     return WK_PARTLY_CLOUDY;
     if (strstr(t, "阴"))                       return WK_CLOUDY;
     if (strstr(t, "晴"))                       return WK_SUNNY;
-    // 英文（wttr.in 返回的 %C 是英文）
+    // 英文兜底（QWeather 返回中文，此分支一般不触发，保留以防其他数据源）
     if (ci_strstr(t, "thunder") || ci_strstr(t, "storm")) return WK_THUNDER;
     if (ci_strstr(t, "snow") || ci_strstr(t, "sleet"))    return WK_SNOW;
     if (ci_strstr(t, "rain") || ci_strstr(t, "shower") ||

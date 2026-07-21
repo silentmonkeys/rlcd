@@ -1,8 +1,8 @@
 // user_app —— 把系统里的“数据源”（时钟、温湿度、电量）挂到 ui_model。
 //
-// 目前：SHTC3 提供真实的室内温湿度；时间仍走 esp_timer 本机时钟（等 RTC 接入
-// 再换）；电池百分比暂用固定值（等 ADC 通路接入再换）。
-// 参考实现见 02_ESP-IDF/05_I2C_SHTC3。
+// 目前：SHTC3 提供真实的室内温湿度；电池电量由 ADC1_CH3(GPIO4) 实测，充电状态
+// 用电压趋势启发式推断；时间走系统本地时钟（SNTP 校时，RTC 待硬件到货再接）。
+// 参考实现见 02_ESP-IDF/05_I2C_SHTC3、03_ADC_Test。
 
 #include "user_app.h"
 #include "ui_model.h"
@@ -11,6 +11,8 @@
 #include "lvgl_bsp.h"
 #include "i2c_bsp.h"
 #include "sdcard_bsp.h"
+#include "adc_bsp.h"
+#include "net_bsp.h"
 #include "user_config.h"
 
 #include <math.h>
@@ -19,6 +21,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <unistd.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <esp_log.h>
@@ -119,12 +122,50 @@ static void refresh_dynamic_device_info(ui_model_t *m)
     }
 }
 
+// ------------ 电池采样 + 充电趋势推断 --------------------------------
+// 硬件只能测电压（无充电检测引脚），用电压趋势启发式判充电：
+//   连续 CHARGE_CONFIRM 次采样净上升 > CHARGE_STEP_V → 判为充电中；
+//   出现一次明显下降 → 立即清除充电态。
+// 采样有噪声，阈值取得保守（20mV / 连续 3 次），宁可漏报不误报。
+#define CHARGE_STEP_V     0.02f
+#define CHARGE_CONFIRM    3
+
+static bool  s_adc_ok = false;
+static float s_last_vbat = 0.0f;
+static int   s_rise_streak = 0;
+
+static void sample_battery(ui_model_t *m)
+{
+    if (!s_adc_ok) {
+        // ADC 不可用：保持占位，避免状态栏画出 0%
+        if (m->battery_percent == 0) m->battery_percent = 80;
+        m->battery_charging = false;
+        return;
+    }
+
+    float vbat = Adc_GetBatteryVoltage();
+    m->battery_percent = Adc_GetBatteryLevel();
+
+    if (s_last_vbat > 0.0f) {
+        if (vbat > s_last_vbat + CHARGE_STEP_V) {
+            if (s_rise_streak < CHARGE_CONFIRM) s_rise_streak++;
+        } else if (vbat < s_last_vbat - CHARGE_STEP_V) {
+            s_rise_streak = 0;                 // 明显下降 → 放电
+            m->battery_charging = false;
+        }
+        // 介于两阈值之间：维持当前判断（平台期）
+        if (s_rise_streak >= CHARGE_CONFIRM) m->battery_charging = true;
+    }
+    s_last_vbat = vbat;
+}
+
 static void tick_task(void *arg)
 {
     ui_model_t *m = ui_model_get();
     // 传感器 ~1s 采一次已足够，同时避免 SHTC3 频繁唤醒。
-    // 每 5 秒顺带做一次 SD 卡热插拔探活（拔卡自动卸载 / 插卡自动挂载）。
-    int sd_probe_countdown = 0;
+    // 每 5 秒同一节拍：SD 卡热插拔探活（拔卡自动卸载 / 插卡自动挂载）+ 电池采样
+    //（电压变化慢，无需每秒读）。
+    int slow_countdown = 0;
     for (;;) {
         time_t now = time(NULL);
         struct tm tm_local;
@@ -138,10 +179,14 @@ static void tick_task(void *arg)
             }
         }
 
-        // SD 探活（不持锁；IO 在这里做，避免阻塞 LVGL）
-        if (--sd_probe_countdown <= 0) {
+        // 5 秒慢节拍：SD 探活 + 电池采样 + 无网看门狗
+        bool do_slow = (--slow_countdown <= 0);
+        if (do_slow) {
+            slow_countdown = 5;
+            // SD 探活（不持锁；IO 在这里做，避免阻塞 LVGL）
             SdcardBsp_ProbeAndRemount();
-            sd_probe_countdown = 5;      // 每 5 秒一次
+            // 无网看门狗（内部自行加锁切页；断网超 60s 弹 SETUP）
+            NetBsp_OfflineWatchdogTick();
         }
 
         if (Lvgl_lock(100)) {
@@ -155,9 +200,7 @@ static void tick_task(void *arg)
             m->indoor_temp = temp;
             m->indoor_humi = humi;
 
-            // 电池：等 ADC 接入之前用占位（后续会换成真实采样）。
-            if (m->battery_percent == 0) m->battery_percent = 80;
-            m->battery_charging = false;
+            if (do_slow) sample_battery(m);
 
             refresh_dynamic_device_info(m);
             ui_pages_apply_locked();
@@ -220,6 +263,9 @@ static void csv_log_append_once(const ui_model_t *m)
             m->weather_text[0] ? m->weather_text : "",
             m->city[0] ? m->city : "",
             (int)m->wifi_rssi);
+    // 确保这一行真正落到 SD —— 拔卡/掉电最多丢未 fsync 的当前行，不破坏已有内容
+    fflush(f);
+    fsync(fileno(f));
     fclose(f);
     ESP_LOGI(TAG, "csv_log 追加一行 (%s)", ts);
 }
@@ -253,7 +299,15 @@ void UserApp_AppInit(void)
     } else {
         ESP_LOGW(TAG, "SHTC3 init fail: %d，室内温湿度将保持 NaN", err);
     }
-    // TODO: PCF85063 RTC + ADC 电池电压采样
+
+    // 电池电压 ADC（ADC1_CH3/GPIO4）；失败则回落占位值
+    if (Adc_PortInit() == ESP_OK) {
+        s_adc_ok = true;
+        ESP_LOGI(TAG, "电池 ADC online");
+    } else {
+        ESP_LOGW(TAG, "电池 ADC init fail，电量将用占位值");
+    }
+    // TODO: PCF85063 RTC（硬件到货后接入，见 _logs/plan-refactor-2026-07-21.md）
 }
 
 void UserApp_TaskInit(void)

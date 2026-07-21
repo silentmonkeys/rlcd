@@ -57,16 +57,31 @@ cd simulator && cmake -B build && cmake --build build -j
 
 ## 组件
 
-- **port_bsp** — DisplayPort C++ 类（SPI3 驱动 RLCD）、I2C 主机 + SHTC3 驱动、按键 BSP（multi_button + 5ms tick）。引脚见 `main/user_config.h`。
+- **port_bsp** — DisplayPort C++ 类（SPI3 驱动 RLCD）、I2C 主机 + SHTC3 驱动、按键 BSP（multi_button + 5ms tick）、电池 ADC（`adc_bsp` — ADC1_CH3/GPIO4 + 曲线校准 ×3 分压）、SD 卡 BSP（SDMMC 1-line + 5s 热插拔探活）。引脚见 `main/user_config.h`。
 - **app_bsp** — LVGL v9 端口：tick 定时器、任务 handler、互斥（Lvgl_lock/unlock）。
 - **ui** — 共享 UI。`ui_home_create()` 建树；其他任务写 `ui_model_get()` 后调 `ui_home_request_refresh()` 或 `ui_home_apply_locked()`。
-- **net_bsp** — WiFi STA/SoftAP、HTTP 配网门户、NVS 持久化、天气拉取（wttr / qweather / openweather 三 provider）。
-- **user_app** — 传感器/RTC 初始化 + 1Hz 任务把读数写入 ui_model。
+- **net_bsp** — WiFi STA/SoftAP、HTTP 配网门户、NVS 持久化、天气拉取（**QWeather** 单一 provider）。按职责拆为多文件：`net_bsp.c`（入口 + 共享状态 + NVS + 看门狗）/ `net_wifi.c`（WiFi 事件 + SNTP）/ `net_portal.c`（配网门户，HTML 模板见 `portal_page.h`）/ `net_weather.c`（QWeather API + gzip）/ `net_calendar.c`（日历存 SD，原子写）/ `net_internal.h`（组件内共享声明）。对外 API 仍只在 `net_bsp.h`。
+- **user_app** — 传感器 / 电池 ADC 初始化 + 1Hz tick 任务把读数写入 ui_model（温湿度每秒；电量、充电趋势、SD 探活、无网看门狗共用 5s 慢节拍）；独立 CSV 日志任务（fsync 落盘）。RTC 待硬件到货再接。
+
+## 后台任务与节拍
+
+常驻任务 4 个 + esp_timer 周期回调 2 个。传感器/设备采样统一收敛在 user_tick 一条主线，避免多个独立倒计时。
+
+| 任务 / 回调 | 节拍 | 职责 |
+|---|---|---|
+| user_tick | 1s；**5s 慢节拍** | 每秒读时间 + SHTC3；5s 慢节拍做 SD 热插拔探活 + 电池采样 + `NetBsp_OfflineWatchdogTick()` |
+| csv_log | 10min | 追加一行 CSV 到 SD（首帧延迟 15s，fsync 落盘）|
+| weather | 成功 10min / 失败 30s | 拉 QWeather；事件位可提前唤醒 |
+| LVGL | 自适应 1~500ms | `lv_timer_handler()` 渲染 |
+| button tick（esp_timer）| 5ms | multi_button 按键去抖 |
+| lvgl tick（esp_timer）| 5ms | 给 LVGL 喂 tick |
+
+> 无网看门狗不自带任务：做成一次性 `NetBsp_OfflineWatchdogTick()`，由 user_tick 的 5s 慢节拍调用（状态未就绪时函数自身 early-return，早启无害）。
 
 ## 状态栏显示规则
 
 - **WiFi**：connected=false → 满信号 + "\" 划掉；rssi ≥ -55 → 3 弧；-65 → 2 弧；-75 → 1 弧；<-75 → 仅圆点。
-- **电池**：percent 分 4 档（25/50/75）段数；≤10% 加警示下划线；charging=true 画闪电。
+- **电池**：percent 分 4 档（25/50/75）段数；≤10% 加警示下划线；charging=true 画闪电。数据来自 `adc_bsp` 实测电压（3.0V→0% / 4.12V→100%），charging 由 user_app 的电压趋势启发式推断（无充电检测引脚）。
 
 ## 字体
 

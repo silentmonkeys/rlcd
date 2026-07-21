@@ -45,12 +45,12 @@ rlcd/
 ## 数据流
 
 ```
-传感器 / RTC / ADC ─┐
-                    ▼
+SHTC3 温湿度 / 电池 ADC ─┐
+                         ▼
 net_bsp weather ──▶ ui_model_t (全局单例, ui/include/ui_model.h)
-                    ▲
-                    │  Lvgl_lock(); ui_pages_apply_locked(); Lvgl_unlock()
-                    └── user_app 每秒 tick_task
+                         ▲
+                         │  Lvgl_lock(); ui_pages_apply_locked(); Lvgl_unlock()
+                         └── user_app 每秒 tick_task
 ```
 
 UI 代码对硬件、网络、模拟器一无所知，只读写 `ui_model_t`。
@@ -61,5 +61,5 @@ UI 代码对硬件、网络、模拟器一无所知，只读写 `ui_model_t`。
 
 ## 已知 TODO
 
-- openweather HTTPS provider（骨架已在 net_bsp.c 留位，qweather 已实现）
-- PCF85063 RTC + ADC 电池电压采样接入（SHTC3 已接）
+- PCF85063 RTC 接入（做后备时钟；待硬件到货，方案见 `_logs/plan-refactor-2026-07-21.md`）
+- 电池充电检测目前用电压趋势启发式（无硬件充电检测引脚），有误判空间

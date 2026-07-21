@@ -30,7 +30,7 @@ typedef struct {
     char  city[24];                 // "Beijing"
     char  weather_update[16];       // "15:42"
 
-    // ---- 天气详情页用（wttr/qweather 拉取时可选填） ----
+    // ---- 天气详情页用（QWeather 拉取时可选填） ----
     float outdoor_humi;             // 室外湿度 %
     float wind_speed_kmh;           // 风速 km/h
     char  wind_dir[8];              // "NE" / "S" 等

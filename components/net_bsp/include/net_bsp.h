@@ -8,14 +8,13 @@ extern "C" {
 #include <stddef.h>
 
 // -------- 配置项 --------------------------------------------------
-// 存在 NVS 命名空间 "rlcd_cfg" 下。
+// 存在 NVS 命名空间 "rlcd_cfg" 下。天气固定走 QWeather。
 typedef struct {
     char ssid[33];
     char pass[65];
-    char city[32];              // 天气查询城市 (URL-safe，例如 "Beijing")
-    char weather_provider[16];  // "wttr" | "qweather" | "openweather"
-    char weather_apikey[64];    // qweather / openweather 用，wttr 留空
-    char weather_host[64];      // qweather 用（如 "xxx.qweatherapi.com"）；GeoAPI 城市解析也走此主机
+    char city[32];              // QWeather 城市名或 LocationID（如 "新郑" / "101180106"）
+    char weather_apikey[64];    // QWeather API Key
+    char weather_host[64];      // QWeather API Host（如 "xxx.re.qweatherapi.com"）；GeoAPI 城市解析也走此主机
 } net_config_t;
 
 // -------- 生命周期 -----------------------------------------------
@@ -27,6 +26,10 @@ void NetBsp_Start(void);
 
 // 主动触发一次天气刷新（用于按钮或 debug）
 void NetBsp_TriggerWeatherFetch(void);
+
+// 无网看门狗的一次性检查：STA 断开超 60s 未连上 → 弹 SETUP 页。
+// 不自带任务，由调用方周期性调用（user_app tick_task 的 5s 慢节拍）。
+void NetBsp_OfflineWatchdogTick(void);
 
 // 读/写当前配置（线程安全，会立刻落 NVS）
 bool NetBsp_LoadConfig(net_config_t *out);

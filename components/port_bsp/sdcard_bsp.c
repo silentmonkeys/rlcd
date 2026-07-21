@@ -8,7 +8,6 @@
 
 #include <string.h>
 #include <sys/stat.h>
-#include <sys/statvfs.h>
 
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -83,22 +82,24 @@ bool SdcardBsp_QueryUsage(uint32_t *total_mb, uint32_t *used_mb)
 {
     if (!s_mounted || !s_card) return false;
 
-    // 优先用 sdmmc_card 的容量字段（挂载时就已确定，绝对可用）作为兜底：
-    // statvfs 在某些 FATFS 配置下可能返回 0。
+    // 卡 CSD 上报的总容量（挂载时即确定，绝对可用）作为兜底。
     uint64_t card_total_bytes = (uint64_t)s_card->csd.capacity * s_card->csd.sector_size;
 
-    struct statvfs sv;
-    if (statvfs(SDCARD_MOUNT_POINT, &sv) != 0) {
-        ESP_LOGW(TAG, "statvfs failed, using card capacity only");
+    // ESP-IDF v6.0.1 的 POSIX statvfs 是 ENOSYS 桩函数，恒失败；
+    // 官方封装 esp_vfs_fat_info() 内部按挂载点解析盘符再调 FATFS f_getfree，
+    // 才能真正拿到剩余空间。
+    uint64_t total_bytes = 0, free_bytes = 0;
+    esp_err_t err = esp_vfs_fat_info(SDCARD_MOUNT_POINT, &total_bytes, &free_bytes);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "esp_vfs_fat_info failed: %s, using card capacity only",
+                 esp_err_to_name(err));
         if (total_mb) *total_mb = (uint32_t)(card_total_bytes / (1024 * 1024));
         if (used_mb)  *used_mb  = 0;
         return true;
     }
-    uint64_t total_bytes = (uint64_t)sv.f_blocks * sv.f_frsize;
-    uint64_t free_bytes  = (uint64_t)sv.f_bfree  * sv.f_frsize;
-    // statvfs 拿不到 f_blocks（=0）时回落到卡上报的容量
+    // f_getfree 拿不到总容量（=0）时回落到卡上报的容量
     if (total_bytes == 0) total_bytes = card_total_bytes;
-    uint64_t used_bytes  = (total_bytes > free_bytes) ? (total_bytes - free_bytes) : 0;
+    uint64_t used_bytes = (total_bytes > free_bytes) ? (total_bytes - free_bytes) : 0;
     if (total_mb) *total_mb = (uint32_t)(total_bytes / (1024 * 1024));
     if (used_mb)  *used_mb  = (uint32_t)(used_bytes  / (1024 * 1024));
     ESP_LOGD(TAG, "usage: total=%u MB used=%u MB",
