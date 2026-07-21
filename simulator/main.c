@@ -163,6 +163,14 @@ static void sim_tick_data(void)
     strcpy(m->ip,        "10.217.129.06");
     strcpy(m->mac,       "84:F7:03:6C:AA:BB");
 
+    // --- SD 卡假数据（真机由 sdcard_bsp / user_app 填） ---
+    m->sd_mounted   = true;
+    m->sd_total_mb  = 32 * 1024;    // 32 GB
+    m->sd_used_mb   = 3 * 1024 + 200;
+    // --- Flash 用量假数据（真机由 user_app 扫描分区表填） ---
+    m->flash_used_kb = 4 * 1024;    // 4 MB 已用
+    m->flash_free_kb = 12 * 1024;   // 12 MB 剩余
+
     // --- 配网页假数据 ---
     strcpy(m->ap_ssid, "RLCD-Setup");
     strcpy(m->ap_ip,   "192.168.4.1");

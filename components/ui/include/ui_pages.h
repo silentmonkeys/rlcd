@@ -49,6 +49,10 @@ ui_page_id_t ui_pages_current(void);
 // 让所有页面把 ui_model 同步进各自的控件（调用方持锁）
 void ui_pages_apply_locked(void);
 
+// 用户按键在 SETUP 页 → 记录 setup_dismissed=true 并返回 HOME。
+// 本次开机不再自动弹配网页（除非重启）。
+void ui_pages_dismiss_setup(void);
+
 #ifdef __cplusplus
 }
 #endif

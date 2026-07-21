@@ -66,6 +66,16 @@ typedef struct {
     char     ap_ssid[33];           // 提示手机连的 AP 名，如 "RLCD-Setup"
     char     ap_ip[16];             // 提示手机浏览器访问的 IP，如 "192.168.4.1"
     bool     ap_active;             // SoftAP 是否在广播（true 时配网页可见/可切）
+    bool     setup_dismissed;       // 用户按键退出配网页 → 本次开机不再自动弹
+
+    // ---- SD 卡（port_bsp 挂载时填；未挂载则 mounted=false，容量=0）----
+    bool     sd_mounted;            // SD 是否成功挂载
+    uint32_t sd_total_mb;           // 总容量 MB
+    uint32_t sd_used_mb;            // 已用容量 MB
+
+    // ---- Flash 用量（user_app 每秒刷新）----
+    uint32_t flash_used_kb;         // App + 分区已用 KB
+    uint32_t flash_free_kb;         // 剩余 KB
 } ui_model_t;
 
 // 全局单例（simulator / device 共享），初始化时字段填合理默认。

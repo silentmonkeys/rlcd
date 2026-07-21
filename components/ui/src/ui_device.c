@@ -62,7 +62,7 @@ static ui_status_bar_t *s_bar;      // 状态栏（动态刷新）
 static lv_obj_t *lbl_wifi, *lbl_ip, *lbl_ssid;
 static lv_obj_t *lbl_uptime, *lbl_time, *lbl_sensor;
 static lv_obj_t *lbl_city, *lbl_weather, *lbl_reading;
-static lv_obj_t *lbl_chip, *lbl_flash, *lbl_firmware;
+static lv_obj_t *lbl_sd, *lbl_flash, *lbl_firmware;
 
 static const char *wifi_status_str(const ui_model_t *m)
 {
@@ -77,6 +77,20 @@ static const char *sensor_reading_str(const ui_model_t *m)
     snprintf(s_buf, sizeof(s_buf), "%d℃/%d%%",
              (int)(m->indoor_temp + 0.5f), (int)(m->indoor_humi + 0.5f));
     return s_buf;
+}
+
+// 把 MB 值格式化成 "3.2/16GB" 或 "512/8MB" —— 大于等于 1024MB 时用 GB
+static void format_capacity(char *out, size_t out_n,
+                            uint32_t used_mb, uint32_t total_mb)
+{
+    if (total_mb >= 1024) {
+        // GB 显示 —— 用带 1 位小数的格式
+        float used_gb  = used_mb  / 1024.0f;
+        float total_gb = total_mb / 1024.0f;
+        snprintf(out, out_n, "%.1f/%.0fGB", used_gb, total_gb);
+    } else {
+        snprintf(out, out_n, "%u/%uMB", (unsigned)used_mb, (unsigned)total_mb);
+    }
 }
 
 // 在指定卡片内添加一行
@@ -140,9 +154,9 @@ lv_obj_t *ui_device_create(void)
     lbl_weather = card_add_row(s_screen, x1, y2, 1, "天气");
     lbl_reading = card_add_row(s_screen, x1, y2, 2, "读数");
 
-    // ---- 右下：固件 —— 芯片 / 存储 / 版本 ----
+    // ---- 右下：固件 —— SD / 存储 / 版本 ----
     make_card(s_screen, x2, y2);
-    lbl_chip     = card_add_row(s_screen, x2, y2, 0, "芯片");
+    lbl_sd       = card_add_row(s_screen, x2, y2, 0, "SD");
     lbl_flash    = card_add_row(s_screen, x2, y2, 1, "存储");
     lbl_firmware = card_add_row(s_screen, x2, y2, 2, "版本");
 
@@ -161,9 +175,19 @@ void ui_device_apply_locked(void)
                           m->battery_percent, m->battery_charging);
 
     // 左上 - 网络
+    // 未连接 STA 时，IP/SSID 显示本机 SoftAP 的信息（RLCD-Setup / 192.168.4.1）
+    // ——这样用户按键关闭配网页之后，网络卡片不会残留上一次连接的陈旧数据。
     lv_label_set_text(lbl_wifi, (char *)wifi_status_str(m));
-    lv_label_set_text(lbl_ip, m->ip[0] ? m->ip : "--");
-    lv_label_set_text(lbl_ssid, m->ssid[0] ? m->ssid : "--");
+    if (m->wifi_connected && m->ip[0]) {
+        lv_label_set_text(lbl_ip, m->ip);
+    } else {
+        lv_label_set_text(lbl_ip, m->ap_ip[0] ? m->ap_ip : "--");
+    }
+    if (m->wifi_connected && m->ssid[0]) {
+        lv_label_set_text(lbl_ssid, m->ssid);
+    } else {
+        lv_label_set_text(lbl_ssid, m->ap_ssid[0] ? m->ap_ssid : "--");
+    }
 
     // 右上 - 系统
     {
@@ -183,9 +207,28 @@ void ui_device_apply_locked(void)
     lv_label_set_text(lbl_weather, m->weather_text[0] ? m->weather_text : "--");
     lv_label_set_text(lbl_reading, (char *)sensor_reading_str(m));
 
-    // 右下 - 固件
-    lv_label_set_text(lbl_chip, m->chip_model);
-    snprintf(s_buf, sizeof(s_buf), "%u MB", (unsigned)m->flash_size_mb);
+    // 右下 - 固件 / 存储
+    // 卡片行左侧标签 "SD" 已经由 card_add_row 画出来了，值只需要 "3.2/32GB"
+    // 或 "未连接"，不要再前缀 "SD"，否则会出现 "SD SD 3.2/32GB" 的重复。
+    if (m->sd_mounted && m->sd_total_mb > 0) {
+        char cap[16];
+        format_capacity(cap, sizeof(cap), m->sd_used_mb, m->sd_total_mb);
+        snprintf(s_buf, sizeof(s_buf), "%s", cap);
+    } else {
+        snprintf(s_buf, sizeof(s_buf), "未连接");
+    }
+    lv_label_set_text(lbl_sd, s_buf);
+
+    // 存储：Flash 已用/总容量。总容量走 esp_flash_get_size()（真实 flash 值）
+    {
+        uint32_t total_mb = m->flash_size_mb;
+        uint32_t total_kb = total_mb * 1024;
+        // Flash 一般 <= 32 MB —— 用 MB 表示，一位小数。
+        // 已用 KB → MB（浮点），保留 1 位小数
+        float used_mb  = m->flash_used_kb / 1024.0f;
+        snprintf(s_buf, sizeof(s_buf), "%.1f/%uMB", used_mb, (unsigned)total_mb);
+        (void)total_kb;
+    }
     lv_label_set_text(lbl_flash, s_buf);
     lv_label_set_text(lbl_firmware, m->app_ver);
 }

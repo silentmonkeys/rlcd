@@ -32,6 +32,12 @@ static Button s_key_btn;
 static void on_boot_click(Button *btn)
 {
     (void)btn;
+    // SETUP 页面上任一键短按 → 隐藏 SETUP 并回 HOME（本次开机不再弹）
+    if (ui_pages_current() == UI_PAGE_SETUP) {
+        ESP_LOGI(TAG, "BOOT click on SETUP → dismiss setup");
+        ui_pages_dismiss_setup();
+        return;
+    }
     ESP_LOGI(TAG, "BOOT click → next page");
     ui_pages_next();
 }
@@ -47,6 +53,12 @@ static void on_boot_long(Button *btn)
 static void on_key_click(Button *btn)
 {
     (void)btn;
+    // SETUP 页面上任一键短按 → 隐藏 SETUP 并回 HOME（本次开机不再弹）
+    if (ui_pages_current() == UI_PAGE_SETUP) {
+        ESP_LOGI(TAG, "KEY click on SETUP → dismiss setup");
+        ui_pages_dismiss_setup();
+        return;
+    }
     ESP_LOGI(TAG, "KEY click → prev page");
     ui_pages_prev();
 }

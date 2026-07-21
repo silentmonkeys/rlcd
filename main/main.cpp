@@ -17,6 +17,7 @@
 #include "ui_home.h"
 #include "ui_pages.h"
 #include "button_bsp.h"
+#include "sdcard_bsp.h"
 
 static const char *TAG = "app_main";
 
@@ -53,6 +54,9 @@ extern "C" void app_main(void)
 
     // 2. 应用后端（传感器 / RTC / 数据模型）
     UserApp_AppInit();
+
+    // 2.5 SD 卡（可选）—— 失败不影响主流程，UI 显示"SD 未连接"
+    SdcardBsp_Init();
 
     // 3. 显示
     RlcdPort.RLCD_Init();

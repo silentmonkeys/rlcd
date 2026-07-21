@@ -81,22 +81,23 @@ static void wifi_draw(lv_obj_t *parent, int x, int y, int8_t rssi, bool connecte
     else if (rssi >= -75)                 segs = 1;
     else                                  segs = 0;
 
-    if (segs >= 1) {   // 外弧
-        ui_pixel_rect(parent, x + 6,  y,     12, 2);
-        ui_pixel_rect(parent, x + 3,  y + 2, 3,  2);
-        ui_pixel_rect(parent, x + 18, y + 2, 3,  2);
-        ui_pixel_rect(parent, x,      y + 4, 3,  2);
-        ui_pixel_rect(parent, x + 21, y + 4, 3,  2);
+    // 信号强度越弱，最外层（最大）的弧先消失，最靠近圆点的内弧最后消失。
+    if (segs >= 1) {   // 内弧（最靠近圆点，信号最微弱时仍保留）
+        ui_pixel_rect(parent, x + 9,  y + 11, 6,  2);
+        ui_pixel_rect(parent, x + 7,  y + 13, 2,  2);
+        ui_pixel_rect(parent, x + 15, y + 13, 2,  2);
     }
     if (segs >= 2) {   // 中弧
         ui_pixel_rect(parent, x + 8,  y + 6, 8,  2);
         ui_pixel_rect(parent, x + 5,  y + 8, 3,  2);
         ui_pixel_rect(parent, x + 16, y + 8, 3,  2);
     }
-    if (segs >= 3) {   // 内弧
-        ui_pixel_rect(parent, x + 9,  y + 11, 6,  2);
-        ui_pixel_rect(parent, x + 7,  y + 13, 2,  2);
-        ui_pixel_rect(parent, x + 15, y + 13, 2,  2);
+    if (segs >= 3) {   // 外弧（最大，信号最强时才出现）
+        ui_pixel_rect(parent, x + 6,  y,     12, 2);
+        ui_pixel_rect(parent, x + 3,  y + 2, 3,  2);
+        ui_pixel_rect(parent, x + 18, y + 2, 3,  2);
+        ui_pixel_rect(parent, x,      y + 4, 3,  2);
+        ui_pixel_rect(parent, x + 21, y + 4, 3,  2);
     }
     // 圆点（始终存在）
     ui_pixel_rect(parent, x + 10, y + 17, 4, 3);

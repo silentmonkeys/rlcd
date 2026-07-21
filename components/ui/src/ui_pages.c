@@ -17,10 +17,14 @@ static inline void Lvgl_unlock(void) {}
 
 static ui_page_id_t s_current = UI_PAGE_HOME;
 
-// 页面可见性：SETUP 只在 ap_active=true 时可见/可切；其余页面始终可见
+// 页面可见性：SETUP 只在 ap_active=true 且用户未主动 dismiss 时可见/可切；
+// 其余页面始终可见
 static bool page_visible(ui_page_id_t p)
 {
-    if (p == UI_PAGE_SETUP) return ui_model_get()->ap_active;
+    if (p == UI_PAGE_SETUP) {
+        const ui_model_t *m = ui_model_get();
+        return m->ap_active && !m->setup_dismissed;
+    }
     return true;
 }
 
@@ -121,10 +125,24 @@ void ui_pages_apply_locked(void)
     ui_device_apply_locked();
     ui_setup_apply_locked();
 
-    // 如果当前是 SETUP 页但 ap_active 变 false（配网结束了），自动切回 HOME
+    // 如果当前是 SETUP 页但不再可见（配网结束 / 用户 dismiss），自动切回 HOME
     if (s_current == UI_PAGE_SETUP && !page_visible(UI_PAGE_SETUP)) {
         s_current = UI_PAGE_HOME;
         lv_obj_t *scr = ui_home_screen();
         if (scr) lv_screen_load(scr);
     }
+}
+
+void ui_pages_dismiss_setup(void)
+{
+    if (!Lvgl_lock(200)) return;
+    ui_model_t *m = ui_model_get();
+    m->setup_dismissed = true;
+    if (s_current == UI_PAGE_SETUP) {
+        s_current = UI_PAGE_HOME;
+        lv_obj_t *scr = ui_home_screen();
+        if (scr) lv_screen_load(scr);
+        ui_pages_apply_locked();
+    }
+    Lvgl_unlock();
 }

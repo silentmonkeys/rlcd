@@ -7,5 +7,5 @@ idf_component_register(
     PRIV_INCLUDE_DIRS "src" "../../main"
     PRIV_REQUIRES ui app_bsp
         esp_wifi esp_event esp_http_server esp_http_client esp_netif lwip nvs_flash
-        esp-tls mbedtls
+        esp-tls mbedtls esp_timer
         espressif__zlib)

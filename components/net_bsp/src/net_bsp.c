@@ -22,6 +22,7 @@
 #include "net_bsp.h"
 #include "ui_model.h"
 #include "ui_home.h"
+#include "ui_pages.h"
 #include "lvgl_bsp.h"
 #include "user_config.h"
 
@@ -31,6 +32,7 @@
 #include <stdlib.h>
 #include <time.h>
 #include <sys/time.h>
+#include <sys/stat.h>
 
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -46,6 +48,7 @@
 #include <esp_sntp.h>
 #include <esp_mac.h>
 #include <esp_system.h>
+#include <esp_timer.h>
 #include <nvs.h>
 #include <esp_crt_bundle.h>
 
@@ -67,6 +70,17 @@ static esp_netif_t   *s_netif_ap  = NULL;
 static bool           s_wifi_common_inited = false;
 static bool           s_want_sta   = false;
 static SemaphoreHandle_t s_scan_mux = NULL;   // 保护 esp_wifi_scan_* 一次一个用户
+
+// 正在做 web 扫描 —— disconnect 事件里不要再自动 reconnect，
+// 让 STA 静下来给 esp_wifi_scan_start 让出信道。扫描完再放开。
+// （scan_get 里的定义会重复吗？——用同一符号，把 scan_get 里的 static 删掉。）
+static volatile bool s_scanning = false;
+
+// 无网检测：STA disconnected 时间戳（单位：us）。0 = 当前已连接或从未启动 STA
+static int64_t s_last_disconnected_us = 0;
+// 已经因为超时把 SETUP 弹出过一次 —— 避免每次 tick 都重复 apply
+static bool    s_offline_setup_shown  = false;
+#define OFFLINE_SETUP_THRESHOLD_US   ((int64_t)60 * 1000 * 1000)   // 60s
 
 // ------------ NVS ----------------------------------------------------
 bool NetBsp_LoadConfig(net_config_t *out)
@@ -153,17 +167,21 @@ static void wifi_evt(void *arg, esp_event_base_t base, int32_t id, void *data)
         switch (id) {
             case WIFI_EVENT_STA_START:
                 ESP_LOGI(TAG, "STA_START → connect()");
+                if (s_last_disconnected_us == 0) s_last_disconnected_us = esp_timer_get_time();
                 esp_wifi_connect();
                 break;
             case WIFI_EVENT_STA_DISCONNECTED: {
                 m->wifi_connected = false;
                 m->wifi_rssi = 0;
                 m->ip[0] = 0;       // 清 IP 显示
+                m->ssid[0] = 0;     // 清 SSID —— 设备信息页会回落到本机 AP 名
                 s_retry_count++;
+                if (s_last_disconnected_us == 0) s_last_disconnected_us = esp_timer_get_time();
                 wifi_event_sta_disconnected_t *ev = (wifi_event_sta_disconnected_t *)data;
                 ESP_LOGW(TAG, "STA disconnected (reason=%d), retry #%d",
                          ev ? ev->reason : -1, s_retry_count);
-                esp_wifi_connect();
+                // 扫描进行中不要抢占—— scan_get 结束后会自己调 esp_wifi_connect()
+                if (!s_scanning) esp_wifi_connect();
                 break;
             }
             case WIFI_EVENT_AP_STACONNECTED:
@@ -173,8 +191,11 @@ static void wifi_evt(void *arg, esp_event_base_t base, int32_t id, void *data)
         }
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
         s_retry_count = 0;
+        s_last_disconnected_us = 0;
+        s_offline_setup_shown  = false;
         m->wifi_connected = true;
         m->ap_active = false;    // STA 连上了，配网页自动隐藏
+        m->setup_dismissed = false;  // 下次断网 60s 后可以再弹
         wifi_ap_record_t ap;
         if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK) {
             m->wifi_rssi = ap.rssi;
@@ -344,22 +365,34 @@ static int append_json_str(char *dst, int cap, const char *s)
     return n;
 }
 
+// 全局标记：正在做 web 扫描 —— 在文件级声明，wifi_evt 的 disconnect 处理里查
+// 询它决定要不要抢占 esp_wifi_connect()。
 // GET /scan  → JSON [{ssid,rssi,auth}]
 static esp_err_t scan_get(httpd_req_t *req)
 {
     httpd_resp_set_type(req, "application/json; charset=utf-8");
 
     if (!s_wifi_common_inited) {
+        ESP_LOGW(TAG, "scan: wifi not inited");
         httpd_resp_sendstr(req, "[]");
         return ESP_OK;
     }
     // 一次一个客户端扫描
     if (xSemaphoreTake(s_scan_mux, pdMS_TO_TICKS(1000)) != pdTRUE) {
+        ESP_LOGW(TAG, "scan: mux busy");
         httpd_resp_sendstr(req, "[]");
         return ESP_OK;
     }
 
-    // ALL_CHANNEL_SCAN，被动扫可以看到隐藏之外的绝大多数 AP
+    // 关键：先停掉 STA 的 auto-reconnect 循环 —— 否则 STA 处在 CONNECTING 状态，
+    // esp_wifi_scan_start 会立刻返回 ESP_ERR_WIFI_STATE 拒绝扫描。
+    // disconnect 是幂等的，未连接时也无副作用。
+    s_scanning = true;
+    esp_wifi_disconnect();
+    // 给 STA 一小段时间从 CONNECTING/CONNECTED 掉到 IDLE，扫描才能启动
+    vTaskDelay(pdMS_TO_TICKS(150));
+
+    // ALL_CHANNEL_SCAN 主动扫可以看到隐藏之外的绝大多数 AP
     wifi_scan_config_t sc = {};
     sc.show_hidden = false;
     sc.scan_type   = WIFI_SCAN_TYPE_ACTIVE;
@@ -368,7 +401,10 @@ static esp_err_t scan_get(httpd_req_t *req)
 
     esp_err_t err = esp_wifi_scan_start(&sc, true);   // blocking
     if (err != ESP_OK) {
-        ESP_LOGW(TAG, "scan_start fail: %d", err);
+        ESP_LOGW(TAG, "scan_start fail: %s (0x%x)", esp_err_to_name(err), (unsigned)err);
+        s_scanning = false;
+        // 让 STA 恢复重连（若有凭据）
+        if (s_want_sta) esp_wifi_connect();
         xSemaphoreGive(s_scan_mux);
         httpd_resp_sendstr(req, "[]");
         return ESP_OK;
@@ -376,14 +412,20 @@ static esp_err_t scan_get(httpd_req_t *req)
 
     uint16_t n = 0;
     esp_wifi_scan_get_ap_num(&n);
+    ESP_LOGI(TAG, "scan done: %u APs", (unsigned)n);
     if (n > 24) n = 24;                                // 前 24 个够用
     wifi_ap_record_t *recs = calloc(n ? n : 1, sizeof(wifi_ap_record_t));
     if (!recs) {
+        s_scanning = false;
+        if (s_want_sta) esp_wifi_connect();
         xSemaphoreGive(s_scan_mux);
         httpd_resp_sendstr(req, "[]");
         return ESP_OK;
     }
     esp_wifi_scan_get_ap_records(&n, recs);
+    // 扫描结束 —— 恢复 STA 自动重连（有凭据时）
+    s_scanning = false;
+    if (s_want_sta) esp_wifi_connect();
     xSemaphoreGive(s_scan_mux);
 
     // 组 JSON —— 一次装完发出去，简单可靠
@@ -468,6 +510,9 @@ static void config_httpd_start(void)
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
     cfg.max_uri_handlers = 6;
     cfg.stack_size       = 8 * 1024;   // JSON 生成 + snprintf 需要点栈
+    // scan_get 阻塞 ~2-3s，把发送/接收 timeout 拉长避免浏览器提前断连
+    cfg.recv_wait_timeout = 10;
+    cfg.send_wait_timeout = 10;
     if (httpd_start(&s_httpd, &cfg) != ESP_OK) return;
     httpd_uri_t u_root = { .uri = "/",     .method = HTTP_GET,  .handler = root_get };
     httpd_uri_t u_scan = { .uri = "/scan", .method = HTTP_GET,  .handler = scan_get };
@@ -862,6 +907,9 @@ static bool wx_fetch_daily(const char *host, const char *apikey,
 #define BIT_WEATHER_KICK  BIT1
 static EventGroupHandle_t s_weather_events = NULL;
 
+// 注：CSV 日志已迁移到 user_app.c —— 用独立的 10 分钟节奏，无网也能记录
+// 本地温湿度（哪怕 weather 拉不到，"室外/天气" 字段留空即可）。
+
 static void weather_task(void *arg)
 {
     ui_model_t *m = ui_model_get();
@@ -901,6 +949,7 @@ static void weather_task(void *arg)
                     ui_home_apply_locked();
                     Lvgl_unlock();
                 }
+                // 天气拉取成功 —— UI 已更新；CSV 日志由 user_app 独立任务负责
                 ok = true;
             }
         }
@@ -917,6 +966,33 @@ static void weather_task(void *arg)
     }
 }
 
+
+// 无网看门狗：STA 断开 60s 仍未拿到 IP → 弹出 SETUP 页（前提用户未 dismiss）。
+// 用户如果按键 dismiss，本次开机不再自动弹（setup_dismissed=true 由 UI 层置）。
+static void offline_watchdog_task(void *arg)
+{
+    (void)arg;
+    for (;;) {
+        vTaskDelay(pdMS_TO_TICKS(5 * 1000));
+        ui_model_t *m = ui_model_get();
+        if (m->wifi_connected)           { s_last_disconnected_us = 0; s_offline_setup_shown = false; continue; }
+        if (s_last_disconnected_us == 0) continue;
+        if (m->setup_dismissed)          continue;   // 用户主动隐藏了本次开机不再弹
+        if (s_offline_setup_shown)       continue;
+
+        int64_t now = esp_timer_get_time();
+        if (now - s_last_disconnected_us < OFFLINE_SETUP_THRESHOLD_US) continue;
+
+        // 60s 已过 —— 弹 SETUP
+        s_offline_setup_shown = true;
+        if (Lvgl_lock(200)) {
+            m->ap_active = true;
+            ui_pages_switch_to_locked(UI_PAGE_SETUP);
+            Lvgl_unlock();
+        }
+        ESP_LOGW(TAG, "offline > 60s → switch to SETUP page");
+    }
+}
 
 void NetBsp_Start(void)
 {
@@ -969,13 +1045,18 @@ void NetBsp_Start(void)
         // AP-only 模式下，STA 处于 idle，不发起 connect —— 但 scan 仍可以由 http 触发
     }
 
-    // 无论何种模式，SoftAP 都在广播 → 让配网页 (SETUP) 可见
-    // STA 连上时，wifi_evt 里再把 ap_active 关掉
+    // 无论何种模式，SoftAP 都在广播 —— 但 SETUP 页默认隐藏：
+    //   * 无 NVS 凭据（s_want_sta=false）→ 立即弹 SETUP（用户必须配网）
+    //   * 有凭据但暂未连上 → 等 60s 无网看门狗触发才弹
+    // STA 连上时 wifi_evt 会把 ap_active 关掉
     {
         ui_model_t *m = ui_model_get();
         strncpy(m->ap_ssid, "RLCD-Setup", sizeof(m->ap_ssid) - 1);
         strncpy(m->ap_ip,   "192.168.4.1", sizeof(m->ap_ip)   - 1);
-        m->ap_active = true;
+        m->ap_active = !s_want_sta;   // 无凭据 → 直接进配网态
+        m->setup_dismissed = false;
+        s_last_disconnected_us = esp_timer_get_time();
+        s_offline_setup_shown  = !s_want_sta;   // 无凭据时"已弹"，避免看门狗再次切页
     }
 
     config_httpd_start();
@@ -984,6 +1065,18 @@ void NetBsp_Start(void)
         // 栈：mbedtls TLS 握手 + esp_crt_bundle 峰值 ~12 KiB，zlib inflate 走
         // heap 分配（内部工作缓冲不占栈），加上局部 url[320] 等，16 KiB 足够。
         xTaskCreatePinnedToCore(weather_task, "weather", 16 * 1024, NULL, 3, NULL, 0);
+    }
+
+    // 无网看门狗（无论是否有 SSID 都跑；无凭据时立即已经切到 SETUP）
+    xTaskCreatePinnedToCore(offline_watchdog_task, "net_watchdog",
+                            3 * 1024, NULL, 2, NULL, 0);
+
+    // 无凭据 → 立即把当前页面切到 SETUP（用户必须走配网流程）
+    if (!s_want_sta) {
+        if (Lvgl_lock(500)) {
+            ui_pages_switch_to_locked(UI_PAGE_SETUP);
+            Lvgl_unlock();
+        }
     }
 }
 
