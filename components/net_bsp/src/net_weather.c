@@ -335,6 +335,11 @@ static bool wx_fetch_now(const char *host, const char *apikey,
         strncpy(m->weather_text, v, sizeof(m->weather_text) - 1);
         m->weather_text[sizeof(m->weather_text) - 1] = 0;
     }
+    // icon → weather_code：3 位数字字符串，直接 atoi；主页按它加载位图
+    if (wx_json_str(body, "icon", v, sizeof(v))) {
+        int code = atoi(v);
+        if (code > 0) m->weather_code = code;
+    }
 
     free(body);
     return m->weather_text[0] != 0;

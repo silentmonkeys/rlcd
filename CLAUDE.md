@@ -94,6 +94,17 @@ cd simulator && cmake -B build && cmake --build build -j
 - 需要 `CONFIG_LV_USE_FS_POSIX=y` + `CONFIG_LV_FS_POSIX_LETTER=65`（盘符 'A'）。
 - 模拟器：`UiFont_LoadFromDir(RLCD_FONTS_DIR)` 直接从 `partitions/fonts/` 读同一批 `.bin`。
 
+## 天气图标
+
+和风天气图标存在**同一 `fonts` 分区**的 `weather/<code>.bin`，与字库一起打包进 `fonts.bin`。
+
+- 数据源：`NEEDS/weather_icons/QWeather-Icons-1.8.0/icons/{code}.svg`（线稿，**不用** `-fill` 填充版）。代码 100-153 / 300-399 / 400-499 / 500-515 / 900-999，与 `now.icon` 字段一一对应，无需映射表。
+- 生成：`tools/gen_weather_icons.py`（cairosvg + PIL）4× 超采样栅格化 → LANCZOS 降到 40×40 → 128 阈值二值化。只打包实况 API 会返回的 62 个代码。输出**单文件** `partitions/fonts/ui_font_weather_40.bin`（~13KB），与字库文件同级。
+- 文件格式：`header('WETH'+ver+count) | index[count×8B: code+offset+size] | data[各图标 w,h,bits 拼接]`。
+- 加载：`ui_weather_icon_load(img, code)`（`components/ui/src/ui_weather_icon.c`）open 一次缓存句柄，二分查索引 → seek 读数据，拼 `lv_image_dsc_t`（`LV_COLOR_FORMAT_I1`，调色板 0=白 1=黑），找不到代码时回落 999（未知）。路径 `A:<base>/ui_font_weather_40.bin`。
+- 主页 `ui_home.c` 用 `lv_img` + `weather_code` 显示位图（旧像素绘制已删除，仅保留 999 位图兜底）。`net_weather.c` 解析 `now.icon` → `weather_code`。
+- 改图标/加字：重跑 `python3 tools/gen_weather_icons.py` → `idf.py build`（分区镜像自动包含 `weather/` 子目录）。
+
 ## 约定
 
 - **语言**：main.cpp / port_bsp / app_bsp 是 C++；ui / net_bsp / user_app 是 C。头文件用 `extern "C"` 守卫。

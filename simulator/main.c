@@ -95,9 +95,12 @@ static void save_ppm(const char *path)
     printf("saved %s\n", path);
 }
 
-// 8 种天气名，用于 --gallery 循环展示
+// 8 种天气名，用于 --gallery 循环展示 —— 与 QWeather icon 代码一一对应
 static const char *GALLERY_WEATHER[] = {
     "晴", "多云", "阴", "小雨", "大雪", "雷阵雨", "雾", "unknown-xxx",
+};
+static const int GALLERY_CODE[] = {
+    100, 101, 104, 305, 402, 302, 501, 999,
 };
 #define GALLERY_N ((int)(sizeof(GALLERY_WEATHER)/sizeof(GALLERY_WEATHER[0])))
 static int  s_gallery_idx = 0;
@@ -127,8 +130,10 @@ static void sim_tick_data(void)
         strncpy(m->weather_text, GALLERY_WEATHER[s_gallery_idx],
                 sizeof(m->weather_text) - 1);
         m->weather_text[sizeof(m->weather_text) - 1] = 0;
+        m->weather_code = GALLERY_CODE[s_gallery_idx];
     } else {
         strcpy(m->weather_text, "多云");
+        m->weather_code = 101;
     }
     strcpy(m->city, "北京");
     snprintf(m->weather_update, sizeof(m->weather_update), "%02d:%02d", m->hour, m->minute);
@@ -187,10 +192,11 @@ static void *stdin_cmd_thread(void *arg)
 {
     (void)arg;
     char line[128];
-    fprintf(stderr, "[console] commands: 'mark MM-DD'  |  'unmark'  |  'page N' (0=home,1=weather,2=calendar,3=device)\n");
-    fprintf(stderr, "[console]   'marks CSV'   如 marks 01-01,10-01\n");
-    fprintf(stderr, "[console]   'events SPEC' 如 events 01-01=元旦;02-14=情人节\n");
-    fprintf(stderr, "[console]   'labels SPEC' 如 labels 加油;好好吃饭;早点睡\n");
+    fprintf(stderr, "[console] commands:\n");
+    fprintf(stderr, "[console]   page N               切页 (0=home 1=weather 2=calendar 3=device)\n");
+    fprintf(stderr, "[console]   weather <code> [text]  写 weather_code 并刷新图标 (如 weather 305 小雨)\n");
+    fprintf(stderr, "[console]   mark MM-DD / marks CSV / unmark   日历标注\n");
+    fprintf(stderr, "[console]   events SPEC / labels SPEC        日历预定/标签\n");
     while (fgets(line, sizeof(line), stdin)) {
         // 去尾部换行
         line[strcspn(line, "\r\n")] = 0;
@@ -215,6 +221,19 @@ static void *stdin_cmd_thread(void *arg)
                 ui_pages_switch_to(p);
                 fprintf(stderr, "[console] switched to page %d\n", p);
             }
+        } else if (strncmp(line, "weather ", 8) == 0) {
+            // weather <code> [text] —— 直接写 weather_code 并刷新主页图标
+            int code = atoi(line + 8);
+            ui_model_t *m = ui_model_get();
+            m->weather_code = code;
+            char *sp = strchr(line + 8, ' ');
+            if (sp && *(sp + 1)) {
+                strncpy(m->weather_text, sp + 1, sizeof(m->weather_text) - 1);
+                m->weather_text[sizeof(m->weather_text) - 1] = 0;
+            }
+            ui_pages_apply_locked();
+            fprintf(stderr, "[console] weather_code=%d text='%s'\n",
+                    m->weather_code, m->weather_text);
         } else if (line[0]) {
             fprintf(stderr, "[console] unknown: %s\n", line);
         }

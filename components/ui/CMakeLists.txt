@@ -8,6 +8,7 @@ idf_component_register(
                "src/ui_pages.c"
                "src/lcd_clock.c"
                "src/ui_font.c"
+               "src/ui_weather_icon.c"
     INCLUDE_DIRS "include"
     PRIV_REQUIRES app_bsp spiffs
     REQUIRES   lvgl__lvgl)

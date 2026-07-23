@@ -43,6 +43,7 @@ add_executable(rlcd_sim
     ${UI_DIR}/src/ui_pages.c
     ${UI_DIR}/src/lcd_clock.c
     ${UI_DIR}/src/ui_font.c
+    ${UI_DIR}/src/ui_weather_icon.c
 )
 
 # 字库目录（partitions/fonts/*.bin）路径传给模拟器，运行时 lv_binfont_create 读它
