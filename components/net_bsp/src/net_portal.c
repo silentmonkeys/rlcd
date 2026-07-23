@@ -144,13 +144,20 @@ static esp_err_t scan_get(httpd_req_t *req)
         return ESP_OK;
     }
 
-    // 关键：先停掉 STA 的 auto-reconnect 循环 —— 否则 STA 处在 CONNECTING 状态，
-    // esp_wifi_scan_start 会立刻返回 ESP_ERR_WIFI_STATE 拒绝扫描。
-    // disconnect 是幂等的，未连接时也无副作用。
+    // 关键：STA 处在 CONNECTING（自动重连）状态时，esp_wifi_scan_start 会立刻返回
+    // ESP_ERR_WIFI_STATE 拒绝扫描 —— 得先 disconnect 让状态机回到 IDLE。
+    // 但如果 STA 已经 CONNECTED（用户正是通过 STA IP 访问这个配网页），disconnect
+    // 会瞬间掐断 HTTP 会话，浏览器就报 "TypeError: Failed to fetch"。
+    // 判据：esp_wifi_sta_get_ap_info() == ESP_OK 表示 STA 已关联 —— 此时不要断，
+    // 直接扫（芯片支持 connected + scan，会短暂跳信道，TCP 自动恢复）。
+    wifi_ap_record_t cur_ap;
+    bool sta_online = (esp_wifi_sta_get_ap_info(&cur_ap) == ESP_OK);
     s_scanning = true;
-    esp_wifi_disconnect();
-    // 给 STA 一小段时间从 CONNECTING/CONNECTED 掉到 IDLE，扫描才能启动
-    vTaskDelay(pdMS_TO_TICKS(150));
+    if (!sta_online) {
+        esp_wifi_disconnect();
+        // 给 STA 一小段时间从 CONNECTING 掉到 IDLE，扫描才能启动
+        vTaskDelay(pdMS_TO_TICKS(150));
+    }
 
     // ALL_CHANNEL_SCAN 主动扫可以看到隐藏之外的绝大多数 AP
     wifi_scan_config_t sc = {};
@@ -163,8 +170,8 @@ static esp_err_t scan_get(httpd_req_t *req)
     if (err != ESP_OK) {
         ESP_LOGW(NET_TAG, "scan_start fail: %s (0x%x)", esp_err_to_name(err), (unsigned)err);
         s_scanning = false;
-        // 让 STA 恢复重连（若有凭据）
-        if (s_want_sta) esp_wifi_connect();
+        // 只有我们主动断过才需要重连
+        if (s_want_sta && !sta_online) esp_wifi_connect();
         xSemaphoreGive(s_scan_mux);
         httpd_resp_sendstr(req, "[]");
         return ESP_OK;
@@ -177,15 +184,15 @@ static esp_err_t scan_get(httpd_req_t *req)
     wifi_ap_record_t *recs = calloc(n ? n : 1, sizeof(wifi_ap_record_t));
     if (!recs) {
         s_scanning = false;
-        if (s_want_sta) esp_wifi_connect();
+        if (s_want_sta && !sta_online) esp_wifi_connect();
         xSemaphoreGive(s_scan_mux);
         httpd_resp_sendstr(req, "[]");
         return ESP_OK;
     }
     esp_wifi_scan_get_ap_records(&n, recs);
-    // 扫描结束 —— 恢复 STA 自动重连（有凭据时）
+    // 扫描结束 —— 若之前我们主动断开过 STA，这里恢复自动重连
     s_scanning = false;
-    if (s_want_sta) esp_wifi_connect();
+    if (s_want_sta && !sta_online) esp_wifi_connect();
     xSemaphoreGive(s_scan_mux);
 
     // 组 JSON —— 一次装完发出去，简单可靠

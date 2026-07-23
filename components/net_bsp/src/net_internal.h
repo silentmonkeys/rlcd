@@ -43,6 +43,10 @@ void wifi_common_init(void);      // WiFi 公共初始化（只跑一次）
 void fill_ap_config(wifi_config_t *wc);
 void fill_sta_config(wifi_config_t *wc);
 void sntp_start_once(void);       // STA 拿到 IP 后启动 SNTP（幂等）
+// SoftAP 广播开关：仅切 wifi_mode，netif 保留。幂等 —— 处于目标模式时直接返回。
+// STA 连上时调用 softap_stop() 熄灭 AP 广播，断网/需要配网时 softap_start() 拉起。
+void softap_start(void);
+void softap_stop(void);
 
 // ------------ net_portal.c -------------------------------------------
 void config_httpd_start(void);    // 启动配网 HTTP 服务器（幂等）

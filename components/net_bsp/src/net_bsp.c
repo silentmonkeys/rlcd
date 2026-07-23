@@ -118,6 +118,7 @@ void NetBsp_OfflineWatchdogTick(void)
 
     // 60s 已过 —— 弹 SETUP
     s_offline_setup_shown = true;
+    softap_start();   // 断网太久了，把 SoftAP 广播重新拉起来方便配网
     if (Lvgl_lock(200)) {
         m->ap_active = true;
         ui_pages_switch_to_locked(UI_PAGE_SETUP);

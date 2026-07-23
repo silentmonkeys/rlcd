@@ -87,6 +87,8 @@ static void wifi_evt(void *arg, esp_event_base_t base, int32_t id, void *data)
         m->wifi_connected = true;
         m->ap_active = false;    // STA 连上了，配网页自动隐藏
         m->setup_dismissed = false;  // 下次断网 60s 后可以再弹
+        // 已经在线 —— 关掉 SoftAP 广播，避免 "RLCD-Setup" 一直出现在附近扫描列表
+        softap_stop();
         wifi_ap_record_t ap;
         if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK) {
             m->wifi_rssi = ap.rssi;
@@ -150,4 +152,36 @@ void fill_sta_config(wifi_config_t *wc)
     wc->sta.pmf_cfg.required    = false;
     wc->sta.sae_pwe_h2e         = WPA3_SAE_PWE_BOTH;
     wc->sta.failure_retry_cnt   = 5;
+}
+
+// ------------ SoftAP 广播开关（幂等） ---------------------------------
+// 只切 wifi_mode，AP netif / AP 配置都保留 —— 切回 APSTA 后 SSID/信道无需重设。
+// STA 尚未 start（s_want_sta=false 且 mode!=APSTA 的特殊场景）时不做动作。
+void softap_stop(void)
+{
+    if (!s_wifi_common_inited) return;
+    wifi_mode_t cur;
+    if (esp_wifi_get_mode(&cur) != ESP_OK) return;
+    if (cur == WIFI_MODE_STA) return;                   // 已经关了
+    if (cur != WIFI_MODE_APSTA && cur != WIFI_MODE_AP) return;
+    esp_err_t err = esp_wifi_set_mode(WIFI_MODE_STA);
+    if (err == ESP_OK) {
+        ESP_LOGI(NET_TAG, "SoftAP off (mode → STA)");
+    } else {
+        ESP_LOGW(NET_TAG, "SoftAP off failed: %s", esp_err_to_name(err));
+    }
+}
+
+void softap_start(void)
+{
+    if (!s_wifi_common_inited) return;
+    wifi_mode_t cur;
+    if (esp_wifi_get_mode(&cur) != ESP_OK) return;
+    if (cur == WIFI_MODE_APSTA || cur == WIFI_MODE_AP) return;   // 已经在广播
+    esp_err_t err = esp_wifi_set_mode(WIFI_MODE_APSTA);
+    if (err == ESP_OK) {
+        ESP_LOGI(NET_TAG, "SoftAP on (mode → APSTA)");
+    } else {
+        ESP_LOGW(NET_TAG, "SoftAP on failed: %s", esp_err_to_name(err));
+    }
 }
