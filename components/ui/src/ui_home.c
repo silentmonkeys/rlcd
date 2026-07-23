@@ -123,19 +123,27 @@ void ui_home_create(void)
     lv_obj_set_style_text_align(lbl_date, LV_TEXT_ALIGN_CENTER, 0);
 
     // --- 三张卡片 --------------------------------------------------
-    // 温度卡
+    // 温度卡（标题 + 数值均居中）
     {
         int x = CARD_X0;
         ui_rounded_frame(scr, x, CARD_Y, CARD_W, CARD_H, 12, 2);
-        ui_make_label(scr, ui_font_cjk_16(),    x + 40, CARD_Y + 16, "温度");
-        lbl_temp_val = ui_make_label(scr, ui_font_digit_mid(), x + 30, CARD_Y + 52, "--℃");
+        lv_obj_t *lbl_temp_title = ui_make_label(scr, ui_font_cjk_16(), x, CARD_Y + 16, "温度");
+        lv_obj_set_width(lbl_temp_title, CARD_W);
+        lv_obj_set_style_text_align(lbl_temp_title, LV_TEXT_ALIGN_CENTER, 0);
+        lbl_temp_val = ui_make_label(scr, ui_font_digit_mid(), x, CARD_Y + 52, "--℃");
+        lv_obj_set_width(lbl_temp_val, CARD_W);
+        lv_obj_set_style_text_align(lbl_temp_val, LV_TEXT_ALIGN_CENTER, 0);
     }
-    // 湿度卡（右侧温度计）
+    // 湿度卡（标题 + 数值均居中）
     {
         int x = CARD_X0 + CARD_W + CARD_GAP;
         ui_rounded_frame(scr, x, CARD_Y, CARD_W, CARD_H, 12, 2);
-        ui_make_label(scr, ui_font_cjk_16(), x + 18, CARD_Y + 16, "湿度");
-        lbl_humi_val = ui_make_label(scr, ui_font_digit_mid(), x + 10, CARD_Y + 52, "--%");
+        lv_obj_t *lbl_humi_title = ui_make_label(scr, ui_font_cjk_16(), x, CARD_Y + 16, "湿度");
+        lv_obj_set_width(lbl_humi_title, CARD_W);
+        lv_obj_set_style_text_align(lbl_humi_title, LV_TEXT_ALIGN_CENTER, 0);
+        lbl_humi_val = ui_make_label(scr, ui_font_digit_mid(), x, CARD_Y + 52, "--%");
+        lv_obj_set_width(lbl_humi_val, CARD_W);
+        lv_obj_set_style_text_align(lbl_humi_val, LV_TEXT_ALIGN_CENTER, 0);
     }
     // 天气卡（图标槽 + 中文天气名）
     {
