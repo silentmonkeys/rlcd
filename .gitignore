@@ -3,6 +3,7 @@
 # ============================================================================
 /build/
 /build_*/
+/tools/rlcd_debug/build
 # sdkconfig 本体 track；.old 是 IDF 每次 menuconfig 自动备份，不要
 sdkconfig.old
 # component manager 拉取的依赖（dependencies.lock 会 track，等于版本锁）

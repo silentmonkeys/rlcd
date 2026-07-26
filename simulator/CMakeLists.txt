@@ -34,6 +34,7 @@ set(UI_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../components/ui")
 
 add_executable(rlcd_sim
     main.c
+    sim_console.c
     ${UI_DIR}/src/ui_common.c
     ${UI_DIR}/src/ui_home.c
     ${UI_DIR}/src/ui_weather.c

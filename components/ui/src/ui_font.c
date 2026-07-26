@@ -35,6 +35,7 @@ static const char *TAG = "ui_font";
 static lv_font_t *s_cjk    = NULL;
 static lv_font_t *s_big    = NULL;
 static lv_font_t *s_mid    = NULL;
+static lv_font_t *s_mood   = NULL;
 static bool       s_ready  = false;
 
 // 兜底：LVGL 内置默认字体 —— 加载失败时 UI 至少还能画 ASCII/数字。
@@ -58,9 +59,10 @@ static lv_font_t *load_bin(const char *dir, const char *name)
 static bool load_all_from(const char *dir)
 {
     if (s_ready) return true;
-    s_cjk = load_bin(dir, "ui_font_cjk_16.bin");
-    s_big = load_bin(dir, "ui_font_digit_big.bin");
-    s_mid = load_bin(dir, "ui_font_digit_mid.bin");
+    s_cjk  = load_bin(dir, "ui_font_cjk_16.bin");
+    s_big  = load_bin(dir, "ui_font_digit_big.bin");
+    s_mid  = load_bin(dir, "ui_font_digit_mid.bin");
+    s_mood = load_bin(dir, "ui_font_mood_16.bin");
     if (!s_cjk || !s_big || !s_mid) {
         FONT_LOGE("至少一个字库加载失败");
         return false;
@@ -104,3 +106,4 @@ bool UiFont_LoadFromDir(const char *dir)
 const lv_font_t *ui_font_cjk_16(void)    { return s_cjk ? s_cjk : fallback_font(); }
 const lv_font_t *ui_font_digit_big(void) { return s_big ? s_big : fallback_font(); }
 const lv_font_t *ui_font_digit_mid(void) { return s_mid ? s_mid : fallback_font(); }
+const lv_font_t *ui_font_mood_16(void)   { return s_mood ? s_mood : fallback_font(); }

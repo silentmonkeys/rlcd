@@ -23,6 +23,8 @@ const lv_font_t *ui_font_cjk_16(void);
 const lv_font_t *ui_font_digit_big(void);
 // 卡片数值 24℃ / 68% 用的 28 px 粗数字
 const lv_font_t *ui_font_digit_mid(void);
+// 主页心情表情（" (^▽^) 舒适 "）—— 16 px，自包含 ASCII + ○▽● + 标签中文字
+const lv_font_t *ui_font_mood_16(void);
 
 #ifdef __cplusplus
 }

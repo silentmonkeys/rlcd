@@ -19,6 +19,7 @@
 #include "ui_calendar.h"
 #include "ui_model.h"
 #include "ui_font.h"
+#include "sim_console.h"
 
 #include <SDL.h>
 
@@ -107,9 +108,16 @@ static int  s_gallery_idx = 0;
 static bool s_gallery_mode = false;
 
 // 让模拟器的 ui_model 数据像真机一样每秒更新
+// 强制温湿度（--temp / --humi 命令行参数）：测试心情表情用
+// 文件作用域，sim_tick_data 和 main 都能访问
+static float s_force_temp = NAN;
+static float s_force_humi = NAN;
+
 static void sim_tick_data(void)
 {
     ui_model_t *m = ui_model_get();
+    uint32_t ovr = sim_console_override_mask();
+
     time_t now = time(NULL);
     struct tm tm_local;
     localtime_r(&now, &tm_local);
@@ -122,121 +130,171 @@ static void sim_tick_data(void)
 
     static float phase = 0;
     phase += 0.02f;
-    m->indoor_temp = 24.0f + 1.5f * sinf(phase);
-    m->indoor_humi = 55.0f + 4.0f * cosf(phase * 1.3f);
-    m->outdoor_temp = 27.0f + 2.0f * sinf(phase * 0.4f);
+
+    // 强制温湿度（--temp / --humi 命令行参数）：测试心情表情用
+    // 同时设 override 位，避免被后面的默认值覆盖
+    if (!isnan(s_force_temp)) {
+        m->indoor_temp = s_force_temp;
+        // 不在这里设 ovr，由调用方在 main() 里统一处理
+    } else if (!(ovr & OVR_INDOOR_TEMP)) {
+        m->indoor_temp = 24.0f + 1.5f * sinf(phase);
+    }
+
+    if (!isnan(s_force_humi)) {
+        m->indoor_humi = s_force_humi;
+    } else if (!(ovr & OVR_INDOOR_HUMI)) {
+        m->indoor_humi = 55.0f + 4.0f * cosf(phase * 1.3f);
+    }
+
+    if (!(ovr & OVR_OUTDOOR_TEMP))
+        m->outdoor_temp = 27.0f + 2.0f * sinf(phase * 0.4f);
 
     if (s_gallery_mode) {
-        strncpy(m->weather_text, GALLERY_WEATHER[s_gallery_idx],
-                sizeof(m->weather_text) - 1);
-        m->weather_text[sizeof(m->weather_text) - 1] = 0;
-        m->weather_code = GALLERY_CODE[s_gallery_idx];
+        if (!(ovr & OVR_WEATHER_TEXT)) {
+            strncpy(m->weather_text, GALLERY_WEATHER[s_gallery_idx],
+                    sizeof(m->weather_text) - 1);
+            m->weather_text[sizeof(m->weather_text) - 1] = 0;
+        }
+        if (!(ovr & OVR_WEATHER_CODE))
+            m->weather_code = GALLERY_CODE[s_gallery_idx];
     } else {
-        strcpy(m->weather_text, "多云");
-        m->weather_code = 101;
+        if (!(ovr & OVR_WEATHER_TEXT)) strcpy(m->weather_text, "多云");
+        if (!(ovr & OVR_WEATHER_CODE)) m->weather_code = 101;
     }
-    strcpy(m->city, "北京");
+
+    if (!(ovr & OVR_CITY)) strcpy(m->city, "北京");
     snprintf(m->weather_update, sizeof(m->weather_update), "%02d:%02d", m->hour, m->minute);
 
     // --- 天气详情页假数据 ---
-    m->outdoor_temp     = 27.0f + 2.0f * sinf(phase * 0.4f);
-    m->outdoor_humi     = 62.0f;
-    m->feels_like_temp  = m->outdoor_temp + 1.5f;
-    m->wind_speed_kmh   = 12.0f;
-    strcpy(m->wind_dir, "东北");
-    m->cloud_pct        = 45;
-    m->pressure_hpa     = 1013;
-    m->visibility_km    = 10;
-    m->uv_index         = 5;
-    m->temp_min         = 22;
-    m->temp_max         = 31;
-    strcpy(m->sunrise, "06:12");
-    strcpy(m->sunset,  "18:45");
+    if (!(ovr & OVR_OUTDOOR_TEMP))
+        m->outdoor_temp     = 27.0f + 2.0f * sinf(phase * 0.4f);
+    if (!(ovr & OVR_OUTDOOR_HUMI))
+        m->outdoor_humi     = 62.0f;
+    if (!(ovr & OVR_FEELS_LIKE))
+        m->feels_like_temp  = m->outdoor_temp + 1.5f;
+    if (!(ovr & OVR_WIND_SPD))
+        m->wind_speed_kmh   = 12.0f;
+    if (!(ovr & OVR_WIND_DIR))
+        strcpy(m->wind_dir, "东北");
+    if (!(ovr & OVR_CLOUD))
+        m->cloud_pct        = 45;
+    if (!(ovr & OVR_PRESSURE))
+        m->pressure_hpa     = 1013;
+    if (!(ovr & OVR_VISIBILITY))
+        m->visibility_km    = 10;
+    if (!(ovr & OVR_UV))
+        m->uv_index         = 5;
+    if (!(ovr & OVR_TEMP_MIN))
+        m->temp_min         = 22;
+    if (!(ovr & OVR_TEMP_MAX))
+        m->temp_max         = 31;
+    if (!(ovr & OVR_SUNRISE))  strcpy(m->sunrise, "06:12");
+    if (!(ovr & OVR_SUNSET))   strcpy(m->sunset,  "18:45");
 
-    m->wifi_connected  = false;
-    m->wifi_rssi       = 0;
-    m->battery_percent = 80;
-    m->battery_charging = false;
+    if (!(ovr & OVR_WIFI_CONN)) m->wifi_connected  = false;
+    if (!(ovr & OVR_WIFI_RSSI))  m->wifi_rssi       = 0;
+    if (!(ovr & OVR_BAT_PCT))    m->battery_percent = 80;
+    if (!(ovr & OVR_BAT_CHG))    m->battery_charging = false;
 
     // --- 设备信息页假数据（真机由 net_bsp / esp_chip_info 填） -------
-    strcpy(m->chip_model, "ESP32-S3");
-    m->cpu_cores        = 2;
-    m->flash_size_mb    = 8;
-    m->free_heap_kb     = 215;
-    strcpy(m->idf_ver,   "v6.0.1");
-    strcpy(m->app_ver,   "RLCD 0.1");
-    strcpy(m->ssid,      "MyPhone-2.4G");
-    strcpy(m->ip,        "10.217.129.06");
-    strcpy(m->mac,       "84:F7:03:6C:AA:BB");
+    // 这些字段"永不自动更新"，sim_tick_data 只填一次
+    static bool s_device_filled = false;
+    if (!s_device_filled) {
+        strcpy(m->chip_model, "ESP32-S3");
+        m->cpu_cores        = 2;
+        m->flash_size_mb    = 8;
+        m->free_heap_kb     = 215;
+        strcpy(m->idf_ver,   "v6.0.1");
+        strcpy(m->app_ver,   "RLCD 0.1");
+        strcpy(m->ssid,      "MyPhone-2.4G");
+        strcpy(m->ip,        "10.217.129.06");
+        strcpy(m->mac,       "84:F7:03:6C:AA:BB");
+        s_device_filled = true;
+    }
 
     // --- SD 卡假数据（真机由 sdcard_bsp / user_app 填） ---
-    m->sd_mounted   = true;
-    m->sd_total_mb  = 32 * 1024;    // 32 GB
-    m->sd_used_mb   = 3 * 1024 + 200;
+    static bool s_sd_filled = false;
+    if (!s_sd_filled) {
+        m->sd_mounted   = true;
+        m->sd_total_mb  = 32 * 1024;    // 32 GB
+        m->sd_used_mb   = 3 * 1024 + 200;
+        s_sd_filled = true;
+    }
     // --- Flash 用量假数据（真机由 user_app 扫描分区表填） ---
-    m->flash_used_kb = 4 * 1024;    // 4 MB 已用
-    m->flash_free_kb = 12 * 1024;   // 12 MB 剩余
+    static bool s_flash_filled = false;
+    if (!s_flash_filled) {
+        m->flash_used_kb = 4 * 1024;    // 4 MB 已用
+        m->flash_free_kb = 12 * 1024;   // 12 MB 剩余
+        s_flash_filled = true;
+    }
 
     // --- 配网页假数据 ---
-    strcpy(m->ap_ssid, "RLCD-Setup");
-    strcpy(m->ap_ip,   "192.168.4.1");
     static uint32_t s_started = 0;
     if (!s_started) s_started = (uint32_t)time(NULL);
     m->uptime_sec = (uint32_t)time(NULL) - s_started;
+    static bool s_setup_filled = false;
+    if (!s_setup_filled) {
+        strcpy(m->ap_ssid, "RLCD-Setup");
+        strcpy(m->ap_ip,   "192.168.4.1");
+        s_setup_filled = true;
+    }
 
     ui_pages_apply_locked();
 }
 
-// 后台线程读 stdin，接收 "mark MM-DD" / "unmark" 命令，标注日历页
+// 后台线程读 stdin，把命令塞进线程安全队列（主循环 drain 时在主线程执行）。
+// 不再直接调 LVGL —— 消除多线程崩溃。
+// 为保持向后兼容，stdin 的旧语法（weather / temp）会被转成新协议。
 static void *stdin_cmd_thread(void *arg)
 {
     (void)arg;
-    char line[128];
-    fprintf(stderr, "[console] commands:\n");
-    fprintf(stderr, "[console]   page N               切页 (0=home 1=weather 2=calendar 3=device)\n");
-    fprintf(stderr, "[console]   weather <code> [text]  写 weather_code 并刷新图标 (如 weather 305 小雨)\n");
-    fprintf(stderr, "[console]   mark MM-DD / marks CSV / unmark   日历标注\n");
-    fprintf(stderr, "[console]   events SPEC / labels SPEC        日历预定/标签\n");
+    char line[256];
+    fprintf(stderr, "[console] stdin commands (legacy syntax still supported):\n");
+    fprintf(stderr, "  page N | next | prev\n");
+    fprintf(stderr, "  weather <code> [text]  |  temp <T> [H]\n");
+    fprintf(stderr, "  mark MM-DD | marks CSV | unmark | events SPEC | labels SPEC\n");
+    fprintf(stderr, "  set <field> <value>  |  get <field>  |  clear  |  help  |  quit\n");
     while (fgets(line, sizeof(line), stdin)) {
-        // 去尾部换行
         line[strcspn(line, "\r\n")] = 0;
-        if (strncmp(line, "mark ", 5) == 0) {
-            ui_calendar_mark_date(line + 5);
-            fprintf(stderr, "[console] marked %s\n", line + 5);
-        } else if (strncmp(line, "marks ", 6) == 0) {
-            ui_calendar_set_marks(line + 6);
-            fprintf(stderr, "[console] set marks: %s\n", line + 6);
-        } else if (strncmp(line, "events ", 7) == 0) {
-            ui_calendar_set_events(line + 7);
-            fprintf(stderr, "[console] set events: %s\n", line + 7);
-        } else if (strncmp(line, "labels ", 7) == 0) {
-            ui_calendar_set_labels(line + 7);
-            fprintf(stderr, "[console] set labels: %s\n", line + 7);
-        } else if (strcmp(line, "unmark") == 0 || strcmp(line, "clear") == 0) {
-            ui_calendar_mark_date(NULL);
-            fprintf(stderr, "[console] cleared marks\n");
-        } else if (strncmp(line, "page ", 5) == 0) {
-            int p = atoi(line + 5);
-            if (p >= 0 && p < (int)UI_PAGE_COUNT) {
-                ui_pages_switch_to(p);
-                fprintf(stderr, "[console] switched to page %d\n", p);
-            }
-        } else if (strncmp(line, "weather ", 8) == 0) {
-            // weather <code> [text] —— 直接写 weather_code 并刷新主页图标
+        if (line[0] == 0) continue;
+
+        char buf[256];
+        const char *out = buf;
+
+        // 兼容旧语法：weather <code> [text] → set weather_code + set weather_text
+        if (strncmp(line, "weather ", 8) == 0) {
             int code = atoi(line + 8);
-            ui_model_t *m = ui_model_get();
-            m->weather_code = code;
+            char code_str[16];
+            snprintf(code_str, sizeof(code_str), "%d", code);
+            snprintf(buf, sizeof(buf), "set weather_code %s", code_str);
+            sim_console_submit(buf);
             char *sp = strchr(line + 8, ' ');
             if (sp && *(sp + 1)) {
-                strncpy(m->weather_text, sp + 1, sizeof(m->weather_text) - 1);
-                m->weather_text[sizeof(m->weather_text) - 1] = 0;
+                snprintf(buf, sizeof(buf), "set weather_text %s", sp + 1);
+                out = buf;
+            } else {
+                continue;
             }
-            ui_pages_apply_locked();
-            fprintf(stderr, "[console] weather_code=%d text='%s'\n",
-                    m->weather_code, m->weather_text);
-        } else if (line[0]) {
-            fprintf(stderr, "[console] unknown: %s\n", line);
         }
+        // 兼容旧语法：temp <T> [H] → set indoor_temp + set indoor_humi
+        else if (strncmp(line, "temp ", 5) == 0) {
+            float t = 0, h = 50;
+            sscanf(line + 5, "%f %f", &t, &h);
+            snprintf(buf, sizeof(buf), "set indoor_temp %.1f", t);
+            sim_console_submit(buf);
+            snprintf(buf, sizeof(buf), "set indoor_humi %.1f", h);
+            out = buf;
+        }
+        // 兼容旧语法：clear → clear（清除 override）
+        else if (strcmp(line, "clear") == 0) {
+            out = "clear";
+        }
+        else {
+            out = line;
+        }
+
+        sim_console_submit(out);
+        if (strcmp(out, "quit") == 0) break;
     }
     return NULL;
 }
@@ -263,8 +321,17 @@ int main(int argc, char **argv)
         } else if (!strcmp(argv[i], "--gallery-capture") && i + 1 < argc) {
             gallery_dir = argv[++i];
             s_gallery_mode = true;
+        } else if (!strcmp(argv[i], "--temp") && i + 1 < argc) {
+            s_force_temp = atof(argv[++i]);
+        } else if (!strcmp(argv[i], "--humi") && i + 1 < argc) {
+            s_force_humi = atof(argv[++i]);
         }
     }
+    // --temp / --humi 设了强制值：直接写模型 + 设 override 位
+    // 此时还没进主循环，不能用队列，用 sim_console_set_field_override 直接写
+    if (!isnan(s_force_temp)) sim_console_set_field_override("indoor_temp", s_force_temp);
+    if (!isnan(s_force_humi)) sim_console_set_field_override("indoor_humi", s_force_humi);
+
     if (capture_path || gallery_dir) setenv("SDL_VIDEODRIVER", "dummy", 1);
 
     if (SDL_Init(SDL_INIT_VIDEO) < 0) {
@@ -306,7 +373,10 @@ int main(int argc, char **argv)
         ui_pages_switch_to_locked((ui_page_id_t)start_page);
     }
 
-    // 后台线程处理控制台命令（不在 --capture / --gallery-capture 无窗口模式下启动）
+    // 启动 TCP 调试服务器（默认端口 9000，失败不退出）
+    sim_console_init(0);
+
+    // 后台线程读 stdin，把命令塞进队列（不在无窗口模式下启动）
     if (!capture_path && !gallery_dir) {
         pthread_t th;
         pthread_create(&th, NULL, stdin_cmd_thread, NULL);
@@ -351,6 +421,9 @@ int main(int argc, char **argv)
             }
         }
 
+        // 在主线程执行队列里的调试命令（来自 stdin / TCP 客户端）
+        sim_console_drain();
+
         if (now - last_data > 500) {
             sim_tick_data();
             last_data = now;
@@ -364,6 +437,8 @@ int main(int argc, char **argv)
             running = false;
         }
     }
+
+    sim_console_shutdown();
 
     SDL_DestroyTexture(texture);
     SDL_DestroyRenderer(renderer);

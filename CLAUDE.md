@@ -8,6 +8,8 @@ RLCD — ESP-IDF 固件 + 桌面模拟器，驱动 Waveshare ESP32-S3-RLCD-4.2�
 
 ### 设备端
 
+
+
 ```sh
 . ~/.espressif/v6.0.1/esp-idf/export.sh
 idf.py set-target esp32s3          # 首次
