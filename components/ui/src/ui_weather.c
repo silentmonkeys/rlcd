@@ -196,7 +196,7 @@ void ui_weather_apply_locked(void)
     if (isnan(m->outdoor_temp)) {
         lv_label_set_text(lbl_top_temp, "-- ℃");
     } else {
-        snprintf(s_buf, sizeof(s_buf), "%d ℃", (int)(m->outdoor_temp + 0.5f));
+        snprintf(s_buf, sizeof(s_buf), "%d ℃", (int)roundf(m->outdoor_temp));
         lv_label_set_text(lbl_top_temp, s_buf);
     }
 
@@ -204,7 +204,7 @@ void ui_weather_apply_locked(void)
         lv_label_set_text(lbl_top_feels, "体感 --");
     } else {
         snprintf(s_buf, sizeof(s_buf), "体感 %d ℃",
-                 (int)(m->feels_like_temp + 0.5f));
+                 (int)roundf(m->feels_like_temp));
         lv_label_set_text(lbl_top_feels, s_buf);
     }
 
@@ -212,7 +212,7 @@ void ui_weather_apply_locked(void)
     if (isnan(m->outdoor_humi)) {
         lv_label_set_text(lbl_humi, "--");
     } else {
-        snprintf(s_buf, sizeof(s_buf), "%d%%", (int)(m->outdoor_humi + 0.5f));
+        snprintf(s_buf, sizeof(s_buf), "%d%%", (int)roundf(m->outdoor_humi));
         lv_label_set_text(lbl_humi, s_buf);
     }
     if (m->pressure_hpa > 0) {
@@ -230,7 +230,7 @@ void ui_weather_apply_locked(void)
     if (isnan(m->wind_speed_kmh)) {
         lv_label_set_text(lbl_wind_speed, "--");
     } else {
-        snprintf(s_buf, sizeof(s_buf), "%d km/h", (int)(m->wind_speed_kmh + 0.5f));
+        snprintf(s_buf, sizeof(s_buf), "%d km/h", (int)roundf(m->wind_speed_kmh));
         lv_label_set_text(lbl_wind_speed, s_buf);
     }
     if (m->uv_index >= 0) {

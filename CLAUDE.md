@@ -1,3 +1,5 @@
+仍
+
 # CLAUDE.md
 
 RLCD — ESP-IDF 固件 + 桌面模拟器，驱动 Waveshare ESP32-S3-RLCD-4.2（400×300 单色反射 LCD）。
@@ -7,8 +9,6 @@ RLCD — ESP-IDF 固件 + 桌面模拟器，驱动 Waveshare ESP32-S3-RLCD-4.2�
 ## 构建 & 运行
 
 ### 设备端
-
-
 
 ```sh
 . ~/.espressif/v6.0.1/esp-idf/export.sh
@@ -39,7 +39,7 @@ cd simulator && cmake -B build && cmake --build build -j
    ADC --->|      |                                | SDL2  |
    net_bsp | UI   |<---- ui_model_t (singleton) -->|       |
    weather |      | ui_home.c / lcd_clock.c        +-------+
-           +------+ + ui_font_*_gen.c
+           +------+ + ui_font.c
             ↕ flush via port_bsp
 ```
 
@@ -69,14 +69,14 @@ cd simulator && cmake -B build && cmake --build build -j
 
 常驻任务 4 个 + esp_timer 周期回调 2 个。传感器/设备采样统一收敛在 user_tick 一条主线，避免多个独立倒计时。
 
-| 任务 / 回调              | 节拍                    | 职责                                                                                       |
-| ------------------------ | ----------------------- | ------------------------------------------------------------------------------------------ |
-| user_tick                | 1s；**5s 慢节拍** | 每秒读时间 + SHTC3；5s 慢节拍做 SD 热插拔探活 + 电池采样 +`NetBsp_OfflineWatchdogTick()` |
-| csv_log                  | 10min                   | 追加一行 CSV 到 SD（首帧延迟 15s，fsync 落盘）                                             |
-| weather                  | 成功 10min / 失败 30s   | 拉 QWeather；事件位可提前唤醒                                                              |
-| LVGL                     | 自适应 1~500ms          | `lv_timer_handler()` 渲染                                                                |
-| button tick（esp_timer） | 5ms                     | multi_button 按键去抖                                                                      |
-| lvgl tick（esp_timer）   | 5ms                     | 给 LVGL 喂 tick                                                                            |
+| 任务 / 回调              | 节拍                  | 职责                                                                                     |
+| ------------------------ | --------------------- | ---------------------------------------------------------------------------------------- |
+| user_tick                | 1s；**5s 慢节拍**     | 每秒读时间 + SHTC3；5s 慢节拍做 SD 热插拔探活 + 电池采样 +`NetBsp_OfflineWatchdogTick()` |
+| csv_log                  | 10min                 | 追加一行 CSV 到 SD（首帧延迟 15s，fsync 落盘）                                           |
+| weather                  | 成功 10min / 失败 30s | 拉 QWeather；事件位可提前唤醒                                                            |
+| LVGL                     | 自适应 1~500ms        | `lv_timer_handler()` 渲染                                                                |
+| button tick（esp_timer） | 5ms                   | multi_button 按键去抖                                                                    |
+| lvgl tick（esp_timer）   | 5ms                   | 给 LVGL 喂 tick                                                                          |
 
 > 无网看门狗不自带任务：做成一次性 `NetBsp_OfflineWatchdogTick()`，由 user_tick 的 5s 慢节拍调用（状态未就绪时函数自身 early-return，早启无害）。
 
@@ -114,4 +114,4 @@ cd simulator && cmake -B build && cmake --build build -j
 - **sdkconfig** 已提交；改 menuconfig 后同步 sdkconfig.defaults。
 - **NEEDS/** 是参考 PNG，布局调整时对照。
 - **build/** 已提交相邻；managed_components 由 component manager 拉取。
-- **编译运行** 使用espidf的mcp服务来编译，如果遇到nijia确实或冲突的情况，应当直接删除原先的build再次编译
+- **编译运行** 使用espidf的mcp服务来编译，如果遇到nijia确实或冲突的情况，应当直接删除原先的build再次编译，如果使用工具仍冲突，则应当删除build文件后再编译

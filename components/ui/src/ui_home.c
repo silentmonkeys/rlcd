@@ -281,14 +281,14 @@ void ui_home_apply_locked(void)
     if (isnan(s_model.indoor_temp)) {
         lv_label_set_text(lbl_temp_val, "--℃");
     } else {
-        snprintf(buf, sizeof(buf), "%d℃", (int)(s_model.indoor_temp + 0.5f));
+        snprintf(buf, sizeof(buf), "%d℃", (int)roundf(s_model.indoor_temp));
         lv_label_set_text(lbl_temp_val, buf);
     }
 
     if (isnan(s_model.indoor_humi)) {
         lv_label_set_text(lbl_humi_val, "--%");
     } else {
-        snprintf(buf, sizeof(buf), "%d%%", (int)(s_model.indoor_humi + 0.5f));
+        snprintf(buf, sizeof(buf), "%d%%", (int)roundf(s_model.indoor_humi));
         lv_label_set_text(lbl_humi_val, buf);
     }
 

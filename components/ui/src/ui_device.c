@@ -17,6 +17,7 @@
 #include "ui_model.h"
 #include "ui_font.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -75,7 +76,7 @@ static const char *sensor_reading_str(const ui_model_t *m)
 {
     if (m->indoor_temp != m->indoor_temp) return "无数据";
     snprintf(s_buf, sizeof(s_buf), "%d℃/%d%%",
-             (int)(m->indoor_temp + 0.5f), (int)(m->indoor_humi + 0.5f));
+             (int)roundf(m->indoor_temp), (int)roundf(m->indoor_humi));
     return s_buf;
 }
 
