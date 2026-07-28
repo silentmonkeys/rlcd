@@ -65,9 +65,6 @@ jobs:
           set -euo pipefail
           mkdir -p release
           cp dist/rlcd_home_full.bin "release/rlcd_home_${{ github.ref_name }}_full.bin"
-          if [ -f "Document/rlcd/ESP32-S3-RLCD-4.2-resource.md" ]; then
-            cp "Document/rlcd/ESP32-S3-RLCD-4.2-resource.md" release/
-          fi
           ls -lh release/
 
       - name: Publish GitHub Release
@@ -77,6 +74,5 @@ jobs:
           body_path: .github/release_notes.md
           files: |
             release/*.bin
-            release/*.md
           fail_on_unmatched_files: false
           make_latest: true

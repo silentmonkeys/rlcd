@@ -2,10 +2,9 @@
 
 ## 包含文件
 
-| 文件                              | 说明                                                      |
-| --------------------------------- | --------------------------------------------------------- |
-| `rlcd_home_*_full.bin`          | 完整固件（bootloader + 分区表 + 应用 + 字库），可直接烧录 |
-| `ESP32-S3-RLCD-4.2-resource.md` | 开发板资源介绍                                            |
+| 文件                     | 说明                                                      |
+| ------------------------ | --------------------------------------------------------- |
+| `rlcd_home_*_full.bin` | 完整固件（bootloader + 分区表 + 应用 + 字库），可直接烧录 |
 
 ## 硬件准备
 
@@ -37,7 +36,7 @@ https://www.espressif.com.cn/zh-hans/support/download/other-tools
 
 配置示意：
 
-![烧录配置示意图](../Document/image/release/image.png)
+![烧录配置示意图](https://raw.githubusercontent.com/silentmonkeys/rlcd/main/Document/image/release/image.png)
 
 ### 3. 进入下载模式
 
