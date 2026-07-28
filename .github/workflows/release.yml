@@ -3,8 +3,11 @@ name: Build & Release Firmware
 on:
   push:
     tags:
-      - "v*.*.*" # 推送形如 v1.0.0 的 tag 时触发
-  workflow_dispatch: # 也支持手动触发
+      - "v*.*.*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -17,37 +20,27 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Build firmware with ESP-IDF
+      - name: Build firmware and merge into one flashable image
         uses: espressif/esp-idf-ci-action@v1
         with:
           esp_idf_version: v6.0.1
           target: esp32s3
-          command: idf.py build
-
-      - name: Merge binaries into one flashable image
-        shell: bash
-        run: |
-          # ESP-IDF 自带 esptool（作为构建依赖），无需 pip install
-          # 用 idf.py merge-bin 按分区偏移合并为单一 bin
-          # 偏移依据 partitions.csv：
-          #   bootloader    0x0
-          #   partition     0x8000
-          #   factory app   0x10000
-          #   fonts(spiffs) 0x410000 (接在 app 4M 之后)
-          idf.py merge-bin \
-            --output build/rlcd_home_full.bin \
-            0x0 build/bootloader/bootloader.bin \
-            0x8000 build/partition_table/partition-table.bin \
-            0x10000 build/rlcd_home.bin \
-            0x410000 build/fonts.bin
-
-          ls -lh build/rlcd_home_full.bin
+          command: >
+            idf.py build &&
+            idf.py merge-bin
+            --output build/rlcd_home_full.bin
+            0x0 build/bootloader/bootloader.bin
+            0x8000 build/partition_table/partition-table.bin
+            0x10000 build/rlcd_home.bin
+            0x410000 build/fonts.bin &&
+            ls -lh build/rlcd_home_full.bin
 
       - name: Upload merged firmware artifact
         uses: actions/upload-artifact@v4
         with:
           name: rlcd_home_full
           path: build/rlcd_home_full.bin
+          if-no-files-found: error
           retention-days: 30
 
   release:
@@ -55,9 +48,6 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
-
-    permissions:
-      contents: write
 
     steps:
       - name: Checkout repository
@@ -72,9 +62,12 @@ jobs:
       - name: Prepare release assets
         shell: bash
         run: |
+          set -euo pipefail
           mkdir -p release
           cp dist/rlcd_home_full.bin "release/rlcd_home_${{ github.ref_name }}_full.bin"
-          cp Document/ESP32-S3-RLCD-4.2-resource.md release/ 2>/dev/null || true
+          if [ -f "Document/ESP32-S3-RLCD-4.2-resource.md" ]; then
+            cp "Document/ESP32-S3-RLCD-4.2-resource.md" release/
+          fi
           ls -lh release/
 
       - name: Publish GitHub Release
