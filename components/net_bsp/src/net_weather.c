@@ -271,7 +271,7 @@ static char *wx_fetch(const char *url)
 // 解析后的城市信息 —— 只在 weather_task 内使用，不再是文件级 static。
 typedef struct {
     char id[16];       // LocationID "101180106"
-    char name[24];     // 标准中文名 "新郑"
+    char name[24];     // 标准中文名 "北京"
 } wx_city_t;
 
 // GeoAPI 城市解析：把 city 名/LocationID → {id, name, lat, lon}。

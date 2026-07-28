@@ -57,7 +57,7 @@ static const char PAGE_TEMPLATE[] =
 "<form method=POST action=/save>"
 "<label>WiFi SSID</label><input id=ssid name=ssid value='%s' maxlength=32 required>"
 "<label>WiFi Password</label><input name=pass type=password value='%s' maxlength=64>"
-"<label>城市 (天气查询用)</label><input name=city value='%s' maxlength=31 placeholder=新郑>"
+"<label>城市 (天气查询用)</label><input name=city value='%s' maxlength=31 placeholder=北京>"
 "<label>QWeather API Key</label><input name=apikey value='%s' maxlength=63>"
 "<label>QWeather API Host</label>"
 "<input name=host value='%s' maxlength=63 placeholder=xxx.re.qweatherapi.com>"

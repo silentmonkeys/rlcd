@@ -21,7 +21,7 @@ ESP32 上的 WiFi / HTTP 配网 / 天气拉取后台。天气固定走 **QWeathe
 | 字段 | 用途 |
 |---|---|
 | ssid / pass | STA 连接凭据 |
-| city | QWeather 城市名或 LocationID（如 "新郑" / "101180106"）|
+| city | QWeather 城市名或 LocationID（如 "北京" / "101180106"）|
 | weather_apikey | QWeather API Key |
 | weather_host | QWeather API Host（每个开发者独立域名，如 xxx.re.qweatherapi.com）；GeoAPI 城市解析也走此主机 |
 

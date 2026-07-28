@@ -12,7 +12,7 @@ extern "C" {
 typedef struct {
     char ssid[33];
     char pass[65];
-    char city[32];              // QWeather 城市名或 LocationID（如 "新郑" / "101180106"）
+    char city[32];              // QWeather 城市名或 LocationID（如 "北京" / "101180106"）
     char weather_apikey[64];    // QWeather API Key
     char weather_host[64];      // QWeather API Host（如 "xxx.re.qweatherapi.com"）；GeoAPI 城市解析也走此主机
 } net_config_t;
