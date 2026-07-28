@@ -1,5 +1,3 @@
-# RLCD 固件 ${{ github.ref_name }}
-
 适用于 **Waveshare ESP32-S3-RLCD-4.2**（400×300 单色反射 LCD）的一键烧录固件包。
 
 ## 包含文件
