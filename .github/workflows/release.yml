@@ -28,11 +28,11 @@ jobs:
           command: >
             idf.py build &&
             idf.py merge-bin
-            --output build/rlcd_home_full.bin
-            0x0 build/bootloader/bootloader.bin
-            0x8000 build/partition_table/partition-table.bin
-            0x10000 build/rlcd_home.bin
-            0x410000 build/fonts.bin &&
+            --output rlcd_home_full.bin
+            0x0 bootloader/bootloader.bin
+            0x8000 partition_table/partition-table.bin
+            0x10000 rlcd_home.bin
+            0x410000 fonts.bin &&
             ls -lh build/rlcd_home_full.bin
 
       - name: Upload merged firmware artifact
