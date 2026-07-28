@@ -10,7 +10,7 @@
 #
 # 字符集：
 #   - ASCII 0x20-0x7F + °(0xB0) + ×(0xD7) + ℃(0x2103) + 箭头(0x2190-0x2193)
-#   - CJK：GB2312 一级 3755 汉字（区位 16-55）+ 常用标点符号（0x3000-0x301F 等）
+#   - CJK：GB2312 一级 3755 汉字（区位 16-55）+ 二级 3008 汉字（区位 56-87）+ 常用标点符号
 set -e
 cd "$(dirname "$0")/.."
 
@@ -57,41 +57,52 @@ CJK_PUNCT_RANGES="\
 -r 0xFF00-0xFFEF \
 "
 
-# GB2312 一级汉字 Unicode 精确列表（16-55 区，共 3755 字）
-# 生成方式（参考）：
-#   python -c "for r in range(0x10,0x38):
-#     for c in range(0x21,0x7F):
-#       gb=bytes([r+0xA0,c+0xA0]); print(hex(int.from_bytes(gb.decode('gb2312').encode('utf-16-be'),'big')))"
-# —— 但一级字实际范围就是 0xB0A1..0xD7F9（GB2312 编码），对应 Unicode 的分布不连续。
-# 为了让脚本自包含，这里直接内联 Python，生成一次时映射写到临时文件。
+# GB2312 一二级汉字 Unicode 精确列表
+#  一级：编码 0xB0A1..0xD7F9（区位 16-55），共 3755 字
+#  二级：编码 0xD8A1..0xF7FE（区位 56-87），共 3008 字
+# 合计 6763 字。为了让脚本自包含，这里直接内联 Python 生成范围表写到临时文件。
 GB1_TMP=$(mktemp)
-python3 - "$GB1_TMP" <<'PY'
-import sys, os
-out = sys.argv[1]
-# GB2312 一级字：编码从 0xB0A1 到 0xD7F9，共 3755 个（跳过 0xxx7F 保留）
-codepoints = set()
+GB2_TMP=$(mktemp)
+python3 - "$GB1_TMP" "$GB2_TMP" <<'PY'
+import sys
+out1, out2 = sys.argv[1], sys.argv[1 + 1]
+# GB2312 一级字：编码从 0xB0A1 到 0xD7F9，共 3755 个
+cp1 = set()
 for row in range(0xB0, 0xD8):        # 高字节
     for col in range(0xA1, 0xFF):    # 低字节
-        gb = bytes([row, col])
         try:
-            ch = gb.decode('gb2312')
+            ch = bytes([row, col]).decode('gb2312')
         except UnicodeDecodeError:
             continue
-        codepoints.add(ord(ch))
-        if len(codepoints) >= 3755:
+        cp1.add(ord(ch))
+        if len(cp1) >= 3755:
+            break
+# GB2312 二级字：编码从 0xD8A1 到 0xF7FE，共 3008 个
+cp2 = set()
+for row in range(0xD8, 0xF8):        # 高字节
+    for col in range(0xA1, 0xFF):    # 低字节
+        try:
+            ch = bytes([row, col]).decode('gb2312')
+        except UnicodeDecodeError:
+            continue
+        cp2.add(ord(ch))
+        if len(cp2) >= 3008:
             break
 # 用 lv_font_conv 的 -r 0xNNNN 逐字符列出，能被 shell 一行传下去
-with open(out, 'w') as f:
-    f.write(' '.join(f'-r 0x{cp:04X}' for cp in sorted(codepoints)))
+with open(out1, 'w') as f:
+    f.write(' '.join(f'-r 0x{cp:04X}' for cp in sorted(cp1)))
+with open(out2, 'w') as f:
+    f.write(' '.join(f'-r 0x{cp:04X}' for cp in sorted(cp2)))
 PY
 GB1_RANGES=$(cat "$GB1_TMP")
-rm -f "$GB1_TMP"
+GB2_RANGES=$(cat "$GB2_TMP")
+rm -f "$GB1_TMP" "$GB2_TMP"
 
 # ---------- 1. CJK 16px（主字库）----------
-echo "生成 CJK 16px 字库（GB2312 一级 3755 + 标点，可能需要 10 秒左右）…"
+echo "生成 CJK 16px 字库（GB2312 一级 3755 + 二级 3008 + 标点，可能需要 20 秒左右）…"
 lv_font_conv \
     --font "$FONT_ASCII" -r 0x20-0x7F -r 0xB0-0xB0 -r 0xD7-0xD7 -r 0x2103-0x2103 -r 0x2190-0x2193 $LATIN_PUNCT_RANGES \
-    --font "$FONT_CJK" $CJK_PUNCT_RANGES $GB1_RANGES \
+    --font "$FONT_CJK" $CJK_PUNCT_RANGES $GB1_RANGES $GB2_RANGES \
     --size 16 --bpp 1 --format bin \
     --no-compress \
     -o "$OUT_DIR/ui_font_cjk_16.bin"
