@@ -27,35 +27,21 @@ jobs:
       - name: Merge binaries into one flashable image
         shell: bash
         run: |
-          pip install esptool
-
-          BOOTLOADER="build/bootloader/bootloader.bin"
-          PARTITION="build/partition_table/partition-table.bin"
-          APP="build/rlcd_home.bin"
-          FONTS="build/fonts.bin"
-          OUTPUT="build/rlcd_home_full.bin"
-
-          # 删除可能残留的旧文件（避免 PermissionError）
-          rm -f "$OUTPUT"
-
-          # 按分区偏移合并为单一 bin，可直接用 flash_download_tools 一键烧录
+          # ESP-IDF 自带 esptool（作为构建依赖），无需 pip install
+          # 用 idf.py merge-bin 按分区偏移合并为单一 bin
           # 偏移依据 partitions.csv：
-          #   bootloader  0x0
-          #   partition   0x8000
-          #   factory app 0x10000
-          #   fonts(spiffs) 接在 app 4M 之后 → 0x410000
-          esptool --chip esp32s3 merge-bin \
-            -o "$OUTPUT" \
-            --flash-mode dio \
-            --flash-freq 80m \
-            --flash-size 16MB \
-            0x0 "$BOOTLOADER" \
-            0x8000 "$PARTITION" \
-            0x10000 "$APP" \
-            0x410000 "$FONTS"
+          #   bootloader    0x0
+          #   partition     0x8000
+          #   factory app   0x10000
+          #   fonts(spiffs) 0x410000 (接在 app 4M 之后)
+          idf.py merge-bin \
+            --output build/rlcd_home_full.bin \
+            0x0 build/bootloader/bootloader.bin \
+            0x8000 build/partition_table/partition-table.bin \
+            0x10000 build/rlcd_home.bin \
+            0x410000 build/fonts.bin
 
-          ls -lh "$OUTPUT"
-          echo "merged_bin=$OUTPUT" >> "$GITHUB_ENV"
+          ls -lh build/rlcd_home_full.bin
 
       - name: Upload merged firmware artifact
         uses: actions/upload-artifact@v4
