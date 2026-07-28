@@ -22,9 +22,6 @@ managed_components/
 .cache/
 # VS Code 用户级设置留给个人
 .vscode/*
-!.vscode/settings.json
-!.vscode/extensions.json
-!.vscode/c_cpp_properties.json
 
 # ============================================================================
 # 系统 / 编辑器临时
