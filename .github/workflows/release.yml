@@ -65,8 +65,8 @@ jobs:
           set -euo pipefail
           mkdir -p release
           cp dist/rlcd_home_full.bin "release/rlcd_home_${{ github.ref_name }}_full.bin"
-          if [ -f "Document/ESP32-S3-RLCD-4.2-resource.md" ]; then
-            cp "Document/ESP32-S3-RLCD-4.2-resource.md" release/
+          if [ -f "Document/rlcd/ESP32-S3-RLCD-4.2-resource.md" ]; then
+            cp "Document/rlcd/ESP32-S3-RLCD-4.2-resource.md" release/
           fi
           ls -lh release/
 

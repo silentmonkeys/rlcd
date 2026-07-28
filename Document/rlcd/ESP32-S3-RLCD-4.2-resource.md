@@ -1,6 +1,6 @@
 # 资源介绍
 
-![1784728484335](image/resource/1784728484335.webp)
+![1784728484335](../image/resource/1784728484335.webp)
 
 1. **ESP32-S3-WROOM-1-N16R8** Wi-Fi 和蓝牙 SoC，240MHz 运行频率，叠封 16MB Flash 和 8MB PSRAM
 2. **ES7210** ADC 芯片实现回声消除电路
