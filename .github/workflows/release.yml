@@ -35,17 +35,20 @@ jobs:
           FONTS="build/fonts.bin"
           OUTPUT="build/rlcd_home_full.bin"
 
+          # 删除可能残留的旧文件（避免 PermissionError）
+          rm -f "$OUTPUT"
+
           # 按分区偏移合并为单一 bin，可直接用 flash_download_tools 一键烧录
           # 偏移依据 partitions.csv：
           #   bootloader  0x0
           #   partition   0x8000
           #   factory app 0x10000
           #   fonts(spiffs) 接在 app 4M 之后 → 0x410000
-          esptool.py --chip esp32s3 merge_bin \
+          esptool --chip esp32s3 merge-bin \
             -o "$OUTPUT" \
-            --flash_mode dio \
-            --flash_freq 80m \
-            --flash_size 16MB \
+            --flash-mode dio \
+            --flash-freq 80m \
+            --flash-size 16MB \
             0x0 "$BOOTLOADER" \
             0x8000 "$PARTITION" \
             0x10000 "$APP" \
