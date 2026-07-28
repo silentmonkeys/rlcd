@@ -31,8 +31,8 @@ jobs:
             --output rlcd_home_full.bin
             0x0 bootloader/bootloader.bin
             0x8000 partition_table/partition-table.bin
-            0x10000 rlcd_home.bin
-            0x410000 fonts.bin &&
+            0x20000 rlcd_home.bin
+            0x420000 fonts.bin &&
             ls -lh build/rlcd_home_full.bin
 
       - name: Upload merged firmware artifact
