@@ -346,12 +346,13 @@ static bool wx_fetch_now(const char *host, const char *apikey,
 }
 
 // 每日预报：daily[0] = 今天，取 tempMin/tempMax + sunrise/sunset + uvIndex。
-// URL: https://{host}/v7/weather/7d?location=<id>&key=<key>
+// URL: https://{host}/v7/weather/3d?location=<id>&key=<key>
+// 用 3d 而非 7d —— 我们只关心今天，减少传输体积。
 static bool wx_fetch_daily(const char *host, const char *apikey,
                            const wx_city_t *city, ui_model_t *m)
 {
     char url[WX_URL_MAX];
-    snprintf(url, sizeof(url), "https://%s/v7/weather/7d?location=%s&key=%s",
+    snprintf(url, sizeof(url), "https://%s/v7/weather/3d?location=%s&key=%s",
              host, city->id, apikey);
     char *body = wx_fetch(url);
     if (!body) return false;
@@ -384,6 +385,10 @@ void weather_task(void *arg)
     // 首次多等 1s 让 SNTP / TLS 状态稳定
     vTaskDelay(pdMS_TO_TICKS(1000));
 
+    // daily 数据一天不变，只在首次（数值为空）或跨天时拉取，避免浪费请求。
+    // -1 表示尚未拉过，下次循环必然触发。
+    int last_daily_day = -1;
+
     for (;;) {
         bool ok = false;
 
@@ -398,8 +403,18 @@ void weather_task(void *arg)
             if (city.id[0] == 0) {
                 ESP_LOGW(NET_TAG, "weather: city resolve failed");
             } else if (wx_fetch_now(s_cfg.weather_host, s_cfg.weather_apikey, &city, m)) {
-                // Now 是主数据（含 cloud 云量），成功后写显示；Daily 失败只警告
-                wx_fetch_daily(s_cfg.weather_host, s_cfg.weather_apikey, &city, m);
+                // Daily（temp_min/max, uv, sunrise/sunset）一天只需拉一次：
+                // 数值为空（首次）或跨天时请求，其余轮次复用缓存。
+                bool daily_needed = (last_daily_day == -1) ||
+                                    (m->temp_min == 0 && m->temp_max == 0) ||
+                                    (m->day != last_daily_day);
+                if (daily_needed) {
+                    if (wx_fetch_daily(s_cfg.weather_host, s_cfg.weather_apikey, &city, m)) {
+                        last_daily_day = m->day;
+                    }
+                } else {
+                    ESP_LOGD(NET_TAG, "weather: daily cached (day=%d), skip", m->day);
+                }
                 if (Lvgl_lock(200)) {
                     if (city.name[0]) {
                         strncpy(m->city, city.name, sizeof(m->city) - 1);
