@@ -64,7 +64,7 @@ bool cal_read_file(char *marks, size_t nm, char *events, size_t ne,
 // 从 SD 加载日历配置并推入 UI。SD 未挂载 / 文件不存在 → 静默（UI 保持空）。
 void cal_load_from_sd(void)
 {
-    static char marks[128], events[512], labels[512];
+    static char marks[CAL_MARKS_BUF], events[CAL_EVENTS_BUF], labels[CAL_LABELS_BUF];
     if (!cal_read_file(marks, sizeof(marks), events, sizeof(events),
                        labels, sizeof(labels))) {
         ESP_LOGI(NET_TAG, "cal: 无 SD 或文件不存在，日历配置为空");
@@ -89,6 +89,21 @@ void cal_load_from_sd(void)
 // FATFS 的 rename 不覆盖已存在目标，故必须先 remove。remove 与 rename 之间掉电
 // 时 conf 会暂缺，但 tmp 是完整新数据——cal_read_file 会在 conf 缺失时把 tmp
 // 扶正回收，因此任何时刻掉电都不丢配置。
+// 把 s 按 delim 拆段，每段写成一行 "<tag> <段>\n"。空段跳过。
+// 指针原地遍历，不做拷贝 —— 旧实现用 char buf[512] + strtok，超过 512 字节的
+// 输入会被静默截掉尾部若干条；现在长度不再有隐含上限。
+static void write_lines(FILE *f, const char *s, char delim, char tag)
+{
+    if (!s) return;
+    while (*s) {
+        const char *end = strchr(s, delim);
+        size_t len = end ? (size_t)(end - s) : strlen(s);
+        if (len > 0) fprintf(f, "%c %.*s\n", tag, (int)len, s);
+        if (!end) break;
+        s = end + 1;
+    }
+}
+
 bool cal_save_to_sd(const char *marks, const char *events, const char *labels)
 {
     mkdir(CAL_DIR, 0777);   // 确保目录存在（已存在无害；SD 未挂载则后续 fopen 失败）
@@ -97,20 +112,9 @@ bool cal_save_to_sd(const char *marks, const char *events, const char *labels)
         ESP_LOGW(NET_TAG, "cal: 写 %s 失败（SD 只读/满？）", CAL_FILE_TMP);
         return false;
     }
-    // 逐条拆分写行 —— 用局部拷贝做 strtok
-    char buf[512];
-    if (marks && marks[0]) {
-        strncpy(buf, marks, sizeof(buf) - 1); buf[sizeof(buf) - 1] = 0;
-        for (char *t = strtok(buf, ","); t; t = strtok(NULL, ",")) fprintf(f, "M %s\n", t);
-    }
-    if (events && events[0]) {
-        strncpy(buf, events, sizeof(buf) - 1); buf[sizeof(buf) - 1] = 0;
-        for (char *t = strtok(buf, ";"); t; t = strtok(NULL, ";")) fprintf(f, "E %s\n", t);
-    }
-    if (labels && labels[0]) {
-        strncpy(buf, labels, sizeof(buf) - 1); buf[sizeof(buf) - 1] = 0;
-        for (char *t = strtok(buf, ";"); t; t = strtok(NULL, ";")) fprintf(f, "L %s\n", t);
-    }
+    write_lines(f, marks,  ',', 'M');
+    write_lines(f, events, ';', 'E');
+    write_lines(f, labels, ';', 'L');
     // 确保数据真正落到 SD，再做替换
     fflush(f);
     fsync(fileno(f));

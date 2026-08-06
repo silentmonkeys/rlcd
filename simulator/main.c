@@ -175,7 +175,7 @@ static void sim_tick_data(void)
     if (!(ovr & OVR_WIND_SPD))
         m->wind_speed_kmh   = 12.0f;
     if (!(ovr & OVR_WIND_DIR))
-        strcpy(m->wind_dir, "东北");
+        strcpy(m->wind_dir, "东北风");
     if (!(ovr & OVR_CLOUD))
         m->cloud_pct        = 45;
     if (!(ovr & OVR_PRESSURE))

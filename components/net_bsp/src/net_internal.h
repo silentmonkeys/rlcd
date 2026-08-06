@@ -6,6 +6,7 @@
 #pragma once
 
 #include "net_bsp.h"
+#include "ui_calendar.h"   // 日历容量上限（CAL_*_BUF 依赖）
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -20,6 +21,13 @@
 #define BIT_WIFI_CONNECTED   BIT0    // s_wifi_events：STA 拿到 IP
 #define BIT_WEATHER_KICK     BIT1    // s_weather_events：手动触发拉天气
 #define OFFLINE_SETUP_THRESHOLD_US   ((int64_t)60 * 1000 * 1000)   // 断网 60s 弹 SETUP
+
+// ------------ 日历三段字符串缓冲大小 ----------------------------------
+// 按 ui_calendar.h 的容量上限算足，保证 UI 能装下的条数一定读得回来。
+// 旧代码 marks 只给 128 字节（放不下 32 条 × "MM-DD," = 192），超过 21 条静默丢失。
+#define CAL_MARKS_BUF    (UI_CAL_MAX_MARKS  * 6 + 64)                    // "MM-DD," × N
+#define CAL_EVENTS_BUF   (UI_CAL_MAX_EVENTS * (6 + UI_CAL_TEXT_MAX) + 64) // "MM-DD=text;" × N
+#define CAL_LABELS_BUF   (UI_CAL_MAX_LABELS * (UI_CAL_TEXT_MAX + 1) + 64) // "text;" × N
 
 // ------------ 共享状态（定义在 net_bsp.c） ----------------------------
 extern const char        *NET_TAG;         // 统一日志 TAG "net_bsp"
@@ -37,6 +45,10 @@ extern bool               s_wifi_common_inited;
 extern bool               s_want_sta;
 extern int64_t            s_last_disconnected_us;  // STA 断开时间戳(us)；0=已连/未启
 extern bool               s_offline_setup_shown;   // 已因超时弹过一次 SETUP
+// 天气配置（城市）被改过 —— weather_task 每轮开头检查，置位则重解析 LocationID。
+// 城市 → LocationID 的解析结果缓存在 weather_task 的局部变量里，光改 NVS 不会生效；
+// 有了这个标志，改城市就不必重启设备。
+extern volatile bool      s_weather_city_dirty;
 
 // ------------ net_wifi.c ---------------------------------------------
 void wifi_common_init(void);      // WiFi 公共初始化（只跑一次）

@@ -7,6 +7,14 @@ extern "C" {
 
 #include "lvgl.h"
 
+// -------- 容量上限（唯一来源）------------------------------------
+// 配网门户（net_portal.c）用这些值校验提交的数据，超限直接回 400，
+// 而不是存进 SD 后在下面的 setter 里被静默丢弃。改这里即两端同步。
+#define UI_CAL_MAX_MARKS       32   // 标注日期条数
+#define UI_CAL_MAX_EVENTS      16   // 预定内容条数
+#define UI_CAL_MAX_LABELS      16   // 随机预设标签条数
+#define UI_CAL_TEXT_MAX        32   // 单条预定/标签文字最大字节数（含结尾 0）
+
 // 创建日历页（返回 screen 对象）
 lv_obj_t *ui_calendar_create(void);
 

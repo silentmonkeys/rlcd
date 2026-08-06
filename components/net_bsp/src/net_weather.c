@@ -64,9 +64,12 @@ static void wx_url_encode(char *out, size_t out_n, const char *in)
 }
 
 // 简易 JSON 字段抽取（找第一个 "key":value）：
-//   - "key":"str" → str 写入 out（截断到 out_n-1）
+//   - "key":"str" → str 写入 out（超长按 UTF-8 字符边界截断）
 //   - "key":num   → num 字符串写入 out
 // 用于扁平 QWeather 响应，不支持嵌套 key。返回 true 表示写了非空。
+//
+// 截断必须按字符边界退：QWeather 的中文字段（windDir/text）都是 3 字节一个汉字，
+// 若直接按字节截断会留下半个汉字，LVGL 渲染成方框 —— "东北风" 曾因此显示成 "东北□"。
 static bool wx_json_str(const char *body, const char *key, char *out, size_t out_n)
 {
     out[0] = 0;
@@ -81,7 +84,11 @@ static bool wx_json_str(const char *body, const char *key, char *out, size_t out
         const char *e = strchr(p, '"');
         if (!e) return false;
         size_t l = (size_t)(e - p);
-        if (l >= out_n) l = out_n - 1;
+        if (l >= out_n) {
+            l = out_n - 1;
+            // 退到首字节（非 10xxxxxx 的续字节）为止，丢掉不完整的尾字符
+            while (l > 0 && ((unsigned char) p[l] & 0xC0) == 0x80) l--;
+        }
         memcpy(out, p, l);
         out[l] = 0;
     } else {
@@ -93,6 +100,19 @@ static bool wx_json_str(const char *body, const char *key, char *out, size_t out
         out[l] = 0;
     }
     return out[0] != 0;
+}
+
+// 把 src 拷进定长字段，超长时**按 UTF-8 字符边界**回退。
+// 中文字段一律走这里，别用裸 strncpy —— 那会留下半个汉字，屏上是个方框。
+static void wx_copy_utf8(char *dst, size_t cap, const char *src)
+{
+    size_t l = strlen(src);
+    if (l >= cap) {
+        l = cap - 1;
+        while (l > 0 && ((unsigned char) src[l] & 0xC0) == 0x80) l--;
+    }
+    memcpy(dst, src, l);
+    dst[l] = 0;
 }
 
 // 拉一次 HTTP GET。返回 malloc 的 wx_response_t（body 是原始字节流），
@@ -327,14 +347,10 @@ static bool wx_fetch_now(const char *host, const char *apikey,
     if (wx_json_str(body, "windSpeed", v, sizeof(v))) m->wind_speed_kmh  = (float)atoi(v);
     if (wx_json_str(body, "cloud",     v, sizeof(v))) m->cloud_pct       = atoi(v);
     m->wind_dir[0] = 0;
-    if (wx_json_str(body, "windDir",   v, sizeof(v))) {
-        strncpy(m->wind_dir, v, sizeof(m->wind_dir) - 1);
-        m->wind_dir[sizeof(m->wind_dir) - 1] = 0;
-    }
-    if (wx_json_str(body, "text",      v, sizeof(v))) {
-        strncpy(m->weather_text, v, sizeof(m->weather_text) - 1);
-        m->weather_text[sizeof(m->weather_text) - 1] = 0;
-    }
+    if (wx_json_str(body, "windDir",   v, sizeof(v)))
+        wx_copy_utf8(m->wind_dir, sizeof(m->wind_dir), v);
+    if (wx_json_str(body, "text",      v, sizeof(v)))
+        wx_copy_utf8(m->weather_text, sizeof(m->weather_text), v);
     // icon → weather_code：3 位数字字符串，直接 atoi；主页按它加载位图
     if (wx_json_str(body, "icon", v, sizeof(v))) {
         int code = atoi(v);
@@ -395,6 +411,13 @@ void weather_task(void *arg)
         if (!s_cfg.weather_host[0] || !s_cfg.weather_apikey[0]) {
             ESP_LOGW(NET_TAG, "weather: host/apikey empty, skip");
         } else {
+            // 配网页改过城市 → 丢弃缓存的 LocationID，下面重新解析（无需重启设备）
+            if (s_weather_city_dirty) {
+                s_weather_city_dirty = false;
+                city.id[0] = 0;
+                last_daily_day = -1;    // 换城市了，daily 数据也得重拉
+                ESP_LOGI(NET_TAG, "weather: city changed → re-resolve '%s'", s_cfg.city);
+            }
             // 城市解析：city 变化或从未解析过时重跑一次
             if (city.id[0] == 0) {
                 const char *q = s_cfg.city[0] ? s_cfg.city : "Beijing";
@@ -417,11 +440,9 @@ void weather_task(void *arg)
                 }
                 if (Lvgl_lock(200)) {
                     if (city.name[0]) {
-                        strncpy(m->city, city.name, sizeof(m->city) - 1);
-                        m->city[sizeof(m->city) - 1] = 0;
+                        wx_copy_utf8(m->city, sizeof(m->city), city.name);
                     } else if (!m->city[0]) {
-                        strncpy(m->city, s_cfg.city, sizeof(m->city) - 1);
-                        m->city[sizeof(m->city) - 1] = 0;
+                        wx_copy_utf8(m->city, sizeof(m->city), s_cfg.city);
                     }
                     snprintf(m->weather_update, sizeof(m->weather_update),
                              "%02d:%02d", m->hour, m->minute);

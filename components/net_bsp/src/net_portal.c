@@ -1,24 +1,46 @@
-// net_portal.c —— SoftAP 配网门户 HTTP 服务器
+// net_portal.c —— 设备管理 / 配网门户 HTTP 服务器
 //
 // HTTP endpoints：
-//   GET  /          配置表单（网络+天气 / 日历 双标签页，附 WiFi 扫描）
-//   GET  /scan      触发一次 WiFi 扫描，返回 JSON: [{ssid,rssi,auth}]
-//   POST /save      保存网络/天气配置到 NVS 并 esp_restart
-//   POST /save_cal  日历数据存 SD 卡，立即应用，不重启
+//   GET  /                   完整页面（HTML+CSS+JS 内联，gzip 预压缩，单请求）
+//   GET  /chart.umd.min.js   Chart.js（gzip 预压缩，仅"数据"页按需加载）
+//   GET  /api/status         实时状态看板数据（只含会变的字段）
+//   GET  /api/sysinfo        静态设备信息（型号/固件/MAC…），前端只取一次
+//   GET  /api/limits         日历容量上限（来源 ui_calendar.h）
+//   GET  /api/config         配置回显 —— 密码/APIKey 只回布尔，绝不回明文
+//   POST /api/config         局部更新配置；仅 ssid/pass 变化才重启
+//   GET  /api/calendar       读 SD 上的日历数据
+//   POST /api/calendar       校验后写 SD，立即生效，不重启
+//   GET  /api/scan           WiFi 扫描 {ok,aps:[{ssid,rssi,auth}]}
+//   POST /api/weather_refresh  触发一次天气拉取
+//   POST /api/reboot         重启
+//   POST /api/forget         清 WiFi 凭据并重启
+//   404 → 302 /              让手机的 Captive Portal 探测自动弹出本页
 //
-// HTML/JS 模板见 portal_page.h。
+// 请求/响应统一 JSON。相比旧版的 x-www-form-urlencoded：
+//   * 不再有"按编码后长度截断缓冲"的问题（旧版城市字段 32B 实际只能存 3 个汉字，
+//     且会在 UTF-8 中间截断产生乱码）
+//   * 配置值不再插进 HTML 属性，HTML 注入面消失
+//   * 超长/非法输入回 400 并说明原因，不再静默存坏数据
+//
+// 前端资源见 portal_assets.h —— **自动生成**，改前端要改 components/net_bsp/portal/
+// 下的源文件再跑 tools/gen_portal.py。资源已 gzip 预压缩：ESP32-S3 的 TCP 窗口只有
+// 5760B，页面从 25KB 压到 9.5KB 是首屏最大的一笔优化，且解压在浏览器侧、设备 0 开销。
 
 #include "net_internal.h"
-#include "portal_page.h"
+#include "portal_assets.h"
+
 #include "ui_model.h"
 #include "ui_pages.h"
 #include "ui_calendar.h"
 #include "lvgl_bsp.h"
 #include "user_config.h"
 
-#include <string.h>
+#include <math.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <time.h>
+#include <string.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <freertos/semphr.h>
@@ -28,121 +50,741 @@
 #include <esp_log.h>
 #include <nvs.h>
 
-// ------------ 表单/JSON 辅助 -----------------------------------------
-static esp_err_t url_unescape_inplace(char *s)
+#define BODY_MAX        8192    // POST body 上限（超出回 413，不再截断）
+#define CAL_TEXT_LIMIT  (UI_CAL_TEXT_MAX - 1)   // 单条文字最大字节数（不含结尾 0）
+
+// =====================================================================
+// JSON 输出（带容量检查，溢出置 ovf 由调用方处理，不静默截断）
+// =====================================================================
+typedef struct { char *buf; int cap; int len; bool ovf; } jw_t;
+
+static void jw_putc(jw_t *w, char c)
 {
-    char *r = s, *w = s;
-    while (*r) {
-        if (*r == '+') { *w++ = ' '; r++; }
-        else if (*r == '%' && r[1] && r[2]) {
-            char h[3] = { r[1], r[2], 0 };
-            *w++ = (char) strtol(h, NULL, 16);
-            r += 3;
-        } else *w++ = *r++;
-    }
-    *w = 0;
-    return ESP_OK;
+    if (w->len + 1 >= w->cap) { w->ovf = true; return; }
+    w->buf[w->len++] = c;
+    w->buf[w->len] = 0;
 }
 
-static void parse_form_field(const char *body, const char *key, char *out, size_t max)
+static void jw_fmt(jw_t *w, const char *fmt, ...)
 {
-    out[0] = 0;
-    size_t klen = strlen(key);
-    const char *p = body;
-    while (*p) {
-        if (strncmp(p, key, klen) == 0 && p[klen] == '=') {
-            const char *v = p + klen + 1;
-            const char *e = strchr(v, '&');
-            size_t l = e ? (size_t)(e - v) : strlen(v);
-            if (l >= max) l = max - 1;
-            memcpy(out, v, l);
-            out[l] = 0;
-            url_unescape_inplace(out);
-            return;
-        }
-        const char *n = strchr(p, '&');
-        if (!n) return;
-        p = n + 1;
-    }
+    int room = w->cap - w->len;
+    if (room <= 1) { w->ovf = true; return; }
+    va_list ap;
+    va_start(ap, fmt);
+    int n = vsnprintf(w->buf + w->len, room, fmt, ap);
+    va_end(ap);
+    if (n < 0 || n >= room) { w->ovf = true; w->len = w->cap - 1; w->buf[w->len] = 0; }
+    else w->len += n;
 }
 
-// 转义 JS 单引号字符串里的危险字符（' \ 换行）—— 用于 INIT_* 注入。
-static void js_escape(char *dst, size_t cap, const char *src)
+// 带引号的 JSON 字符串，转义 " \ 与控制字符
+static void jw_qstr(jw_t *w, const char *s)
 {
-    size_t w = 0;
-    for (const char *p = src; *p && w < cap - 2; p++) {
-        if (*p == '\'' || *p == '\\') { dst[w++] = '\\'; dst[w++] = *p; }
-        else if (*p == '\n' || *p == '\r') { continue; }
-        else dst[w++] = *p;
-    }
-    dst[w] = 0;
-}
-
-// 把字符串输出到 JSON —— 转义 " \ 和控制字符
-static int append_json_str(char *dst, int cap, const char *s)
-{
-    int n = 0;
-    if (n < cap - 1) dst[n++] = '"';
-    for (; *s && n < cap - 8; s++) {
+    jw_putc(w, '"');
+    for (; s && *s; s++) {
         unsigned char c = (unsigned char) *s;
-        if (c == '"' || c == '\\') {
-            dst[n++] = '\\'; dst[n++] = c;
-        } else if (c < 0x20) {
-            n += snprintf(dst + n, cap - n, "\\u%04x", c);
-        } else {
-            dst[n++] = c;
-        }
+        if (c == '"' || c == '\\')      { jw_putc(w, '\\'); jw_putc(w, (char) c); }
+        else if (c == '\n')             { jw_putc(w, '\\'); jw_putc(w, 'n'); }
+        else if (c == '\r')             { jw_putc(w, '\\'); jw_putc(w, 'r'); }
+        else if (c == '\t')             { jw_putc(w, '\\'); jw_putc(w, 't'); }
+        else if (c < 0x20)              { jw_fmt(w, "\\u%04x", c); }
+        else                            { jw_putc(w, (char) c); }
     }
-    if (n < cap - 1) dst[n++] = '"';
-    dst[n] = 0;
-    return n;
+    jw_putc(w, '"');
 }
 
-// ------------ HTTP handlers ------------------------------------------
+// 写 key —— 除紧跟 { [ 外自动补逗号
+static void jw_key(jw_t *w, const char *k)
+{
+    if (w->len > 0) {
+        char last = w->buf[w->len - 1];
+        if (last != '{' && last != '[') jw_putc(w, ',');
+    }
+    jw_qstr(w, k);
+    jw_putc(w, ':');
+}
+
+static void jw_kv_str(jw_t *w, const char *k, const char *v) { jw_key(w, k); jw_qstr(w, v ? v : ""); }
+static void jw_kv_int(jw_t *w, const char *k, long v)        { jw_key(w, k); jw_fmt(w, "%ld", v); }
+static void jw_kv_bool(jw_t *w, const char *k, bool v)       { jw_key(w, k); jw_fmt(w, "%s", v ? "true" : "false"); }
+
+// NaN / inf 在 JSON 里非法 —— 一律写 null，前端显示 "—"
+static void jw_kv_f(jw_t *w, const char *k, float v, int dec)
+{
+    jw_key(w, k);
+    if (isnan(v) || isinf(v)) jw_fmt(w, "null");
+    else                      jw_fmt(w, "%.*f", dec, (double) v);
+}
+
+// 逗号分隔的元素前缀（数组内用）
+static void jw_comma(jw_t *w)
+{
+    if (w->len > 0) {
+        char last = w->buf[w->len - 1];
+        if (last != '[' && last != '{') jw_putc(w, ',');
+    }
+}
+
+// =====================================================================
+// JSON 解析（极简，只覆盖门户前端发来的形态；IDF 6.0 已不含 json 组件）
+// =====================================================================
+static const char *js_ws(const char *p)
+{
+    while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r') p++;
+    return p;
+}
+
+// p 指向开引号，返回闭引号之后；格式错返回 NULL
+static const char *js_skip_string(const char *p)
+{
+    if (*p != '"') return NULL;
+    for (p++; *p; p++) {
+        if (*p == '\\') { if (!p[1]) return NULL; p++; continue; }
+        if (*p == '"') return p + 1;
+    }
+    return NULL;
+}
+
+static const char *js_skip_value(const char *p)
+{
+    p = js_ws(p);
+    if (*p == '"') return js_skip_string(p);
+    if (*p == '{' || *p == '[') {
+        char open = *p, close = (open == '{') ? '}' : ']';
+        int depth = 0;
+        while (*p) {
+            if (*p == '"') { p = js_skip_string(p); if (!p) return NULL; continue; }
+            if (*p == open) depth++;
+            else if (*p == close && --depth == 0) return p + 1;
+            p++;
+        }
+        return NULL;
+    }
+    // number / true / false / null
+    while (*p && !strchr(",}] \t\r\n", *p)) p++;
+    return p;
+}
+
+// 在对象里找成员，返回值起始位置；不存在返回 NULL。只扫本层，键不含转义。
+static const char *js_member(const char *obj, const char *key)
+{
+    if (!obj) return NULL;
+    obj = js_ws(obj);
+    if (*obj != '{') return NULL;
+    const char *p = obj + 1;
+    size_t klen = strlen(key);
+    for (;;) {
+        p = js_ws(p);
+        if (*p != '"') return NULL;              // '}' 或异常
+        const char *ks = p + 1;
+        const char *ke = js_skip_string(p);
+        if (!ke) return NULL;
+        bool match = ((size_t)(ke - 1 - ks) == klen && strncmp(ks, key, klen) == 0);
+        p = js_ws(ke);
+        if (*p != ':') return NULL;
+        p = js_ws(p + 1);
+        if (match) return p;
+        p = js_skip_value(p);
+        if (!p) return NULL;
+        p = js_ws(p);
+        if (*p != ',') return NULL;
+        p++;
+    }
+}
+
+// 解码 JSON 字符串到 out（UTF-8）。返回字节数；格式错或超出 cap 返回 -1。
+// 返回 -1 时调用方回 400 并指明字段 —— 绝不截断后照样保存。
+static int js_str(const char *p, char *out, size_t cap)
+{
+    if (!p) return -1;
+    p = js_ws(p);
+    if (*p != '"' || cap == 0) return -1;
+    p++;
+    size_t w = 0;
+    while (*p != '"') {
+        if (!*p) return -1;
+        unsigned cp;
+        if (*p != '\\') {
+            if (w >= cap - 1) return -1;
+            out[w++] = *p++;
+            continue;
+        }
+        p++;
+        switch (*p) {
+            case 'n': cp = '\n'; p++; goto lit;
+            case 'r': cp = '\r'; p++; goto lit;
+            case 't': cp = '\t'; p++; goto lit;
+            case 'b': cp = '\b'; p++; goto lit;
+            case 'f': cp = '\f'; p++; goto lit;
+            case '"': case '\\': case '/': cp = (unsigned char) *p++; goto lit;
+            case 'u': {
+                char h[5] = {0};
+                for (int i = 0; i < 4; i++) { if (!p[1 + i]) return -1; h[i] = p[1 + i]; }
+                cp = (unsigned) strtoul(h, NULL, 16);
+                p += 5;
+                // UTF-16 代理对（JSON.stringify 对 emoji 会这样编码）
+                if (cp >= 0xD800 && cp <= 0xDBFF && p[0] == '\\' && p[1] == 'u') {
+                    char h2[5] = {0};
+                    for (int i = 0; i < 4; i++) { if (!p[2 + i]) return -1; h2[i] = p[2 + i]; }
+                    unsigned lo = (unsigned) strtoul(h2, NULL, 16);
+                    if (lo >= 0xDC00 && lo <= 0xDFFF) {
+                        cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
+                        p += 6;
+                    }
+                }
+                break;
+            }
+            default: return -1;
+        }
+        // 按 UTF-8 编码码点
+        {
+            int need = cp < 0x80 ? 1 : cp < 0x800 ? 2 : cp < 0x10000 ? 3 : 4;
+            if (w + need >= cap) return -1;
+            if (need == 1) out[w++] = (char) cp;
+            else if (need == 2) {
+                out[w++] = (char) (0xC0 | (cp >> 6));
+                out[w++] = (char) (0x80 | (cp & 0x3F));
+            } else if (need == 3) {
+                out[w++] = (char) (0xE0 | (cp >> 12));
+                out[w++] = (char) (0x80 | ((cp >> 6) & 0x3F));
+                out[w++] = (char) (0x80 | (cp & 0x3F));
+            } else {
+                out[w++] = (char) (0xF0 | (cp >> 18));
+                out[w++] = (char) (0x80 | ((cp >> 12) & 0x3F));
+                out[w++] = (char) (0x80 | ((cp >> 6) & 0x3F));
+                out[w++] = (char) (0x80 | (cp & 0x3F));
+            }
+        }
+        continue;
+    lit:
+        if (w >= cap - 1) return -1;
+        out[w++] = (char) cp;
+    }
+    out[w] = 0;
+    return (int) w;
+}
+
+// 数组迭代：*it 初始指向 '['，每次返回下个元素起始，结束返回 NULL
+static const char *js_arr_next(const char **it)
+{
+    const char *p = js_ws(*it);
+    if (*p == '[' || *p == ',') p = js_ws(p + 1);
+    else return NULL;
+    if (*p == ']' || !*p) return NULL;
+    const char *end = js_skip_value(p);
+    if (!end) return NULL;
+    *it = js_ws(end);
+    return p;
+}
+
+// =====================================================================
+// 请求/响应辅助
+// =====================================================================
+static esp_err_t send_json(httpd_req_t *req, const char *status, const char *body)
+{
+    httpd_resp_set_status(req, status);
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    return httpd_resp_sendstr(req, body);
+}
+
+// 错误回执：{"ok":false,"err":"中文原因"} —— 前端直接 toast 出来
+static esp_err_t send_err(httpd_req_t *req, const char *status, const char *msg)
+{
+    char buf[256];
+    jw_t w = { buf, sizeof(buf), 0, false };
+    jw_putc(&w, '{');
+    jw_kv_bool(&w, "ok", false);
+    jw_kv_str(&w, "err", msg);
+    jw_putc(&w, '}');
+    ESP_LOGW(NET_TAG, "portal %s: %s", status, msg);
+    return send_json(req, status, buf);
+}
+
+static esp_err_t send_ok(httpd_req_t *req)
+{
+    return send_json(req, "200 OK", "{\"ok\":true}");
+}
+
+// 按 content_len 完整读取 body。返回 malloc 的缓冲（调用方 free），失败返回 NULL
+// 并已发出错误响应。旧版用固定 char[512] 读满即停，超长请求会静默丢字段。
+static char *read_body(httpd_req_t *req, esp_err_t *out_err)
+{
+    *out_err = ESP_OK;
+    int total = req->content_len;
+    if (total <= 0)      { *out_err = send_err(req, "400 Bad Request", "请求体为空"); return NULL; }
+    if (total > BODY_MAX) { *out_err = send_err(req, "413 Payload Too Large", "请求体过大"); return NULL; }
+
+    char *body = (char *) malloc(total + 1);
+    if (!body) { *out_err = send_err(req, "500 Internal Server Error", "设备内存不足"); return NULL; }
+
+    int got = 0;
+    while (got < total) {
+        int r = httpd_req_recv(req, body + got, total - got);
+        if (r == HTTPD_SOCK_ERR_TIMEOUT) continue;   // 继续等
+        if (r <= 0) {
+            free(body);
+            *out_err = send_err(req, "400 Bad Request", "请求体接收中断");
+            return NULL;
+        }
+        got += r;
+    }
+    body[total] = 0;
+    return body;
+}
+
+// 取可选字符串成员：不存在 → present=false；存在但非法/超长 → 返回 false
+static bool opt_str(const char *root, const char *key, char *out, size_t cap, bool *present)
+{
+    const char *v = js_member(root, key);
+    *present = (v != NULL);
+    if (!v) { out[0] = 0; return true; }
+    return js_str(v, out, cap) >= 0;
+}
+
+// =====================================================================
+// 静态资源 —— 全部 gzip 预压缩，分块发送
+//
+// 为什么分块：一次 httpd_resp_send() 会让 httpd 试图把整段塞进 socket，而 TCP 窗口
+// 只有 5760B；Chart.js 有 70KB，分块交给 lwIP 更平稳，也不用额外 RAM。
+// 块大小取 4KB —— 大于窗口没有收益，小了又多花系统调用。
+// =====================================================================
+#define ASSET_CHUNK_SZ  4096
+
+static esp_err_t send_asset_gz(httpd_req_t *req, const char *type,
+                               const uint8_t *data, size_t len)
+{
+    httpd_resp_set_type(req, type);
+    httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
+    // 资源随固件走，版本内不变，但**不能**像上一版那样无条件 max-age=86400 缓存：
+    // 那会让烧了新固件的浏览器 24 小时内继续用旧页面。ETag 用资源长度，固件一改
+    // 长度必变；配 no-cache 让浏览器每次带 If-None-Match 来问一句，没变就回 304，
+    // 省掉整段传输，又不会拿到过期页面。
+    char etag[24];
+    snprintf(etag, sizeof(etag), "\"%x\"", (unsigned) len);
+    httpd_resp_set_hdr(req, "ETag", etag);
+    httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
+
+    char inm[32];
+    if (httpd_req_get_hdr_value_str(req, "If-None-Match", inm, sizeof(inm)) == ESP_OK
+        && strcmp(inm, etag) == 0) {
+        httpd_resp_set_status(req, "304 Not Modified");
+        return httpd_resp_send(req, NULL, 0);
+    }
+
+    for (size_t sent = 0; sent < len; ) {
+        size_t n = len - sent;
+        if (n > ASSET_CHUNK_SZ) n = ASSET_CHUNK_SZ;
+        if (httpd_resp_send_chunk(req, (const char *) data + sent, n) != ESP_OK)
+            return ESP_FAIL;
+        sent += n;
+    }
+    return httpd_resp_send_chunk(req, NULL, 0);
+}
+
 static esp_err_t root_get(httpd_req_t *req)
 {
-    // 从 SD 读日历配置，拆成三段（无 SD → 三段为空）
-    static char cm[128], ce[512], cl[512];
-    cal_read_file(cm, sizeof(cm), ce, sizeof(ce), cl, sizeof(cl));
-    // JS 注入前转义
-    static char cm_js[160], ce_js[640], cl_js[640];
-    js_escape(cm_js, sizeof(cm_js), cm);
-    js_escape(ce_js, sizeof(ce_js), ce);
-    js_escape(cl_js, sizeof(cl_js), cl);
-    int sd_ok = ui_model_get()->sd_mounted ? 1 : 0;
+    return send_asset_gz(req, "text/html; charset=utf-8",
+                         PORTAL_INDEX_GZ, PORTAL_INDEX_GZ_LEN);
+}
 
-    // 页面含较多 JS（标签页 + 逐条增删逻辑），用 12KB 避免 snprintf 截断
-    char *page = (char *) malloc(12288);
-    if (!page) return httpd_resp_send_500(req);
-    snprintf(page, 12288, PAGE_TEMPLATE,
-        s_cfg.ssid, s_cfg.pass, s_cfg.city,
-        s_cfg.weather_apikey,
-        s_cfg.weather_host,
-        sd_ok, cm_js, ce_js, cl_js);
-    httpd_resp_set_type(req, "text/html; charset=utf-8");
-    httpd_resp_sendstr(req, page);
-    free(page);
+static esp_err_t chart_js_get(httpd_req_t *req)
+{
+    return send_asset_gz(req, "application/javascript; charset=utf-8",
+                         PORTAL_CHART_GZ, PORTAL_CHART_GZ_LEN);
+}
+
+// Captive Portal：手机探测的任意未知路径都 302 回首页，系统就会自动弹出配置页
+static esp_err_t not_found(httpd_req_t *req, httpd_err_code_t err)
+{
+    (void) err;
+    httpd_resp_set_status(req, "302 Found");
+    httpd_resp_set_hdr(req, "Location", "/");
+    httpd_resp_send(req, NULL, 0);
     return ESP_OK;
 }
 
-// GET /scan  → JSON [{ssid,rssi,auth}]
-// 正在做 web 扫描时置 s_scanning —— wifi_evt 的 disconnect 处理里查询它决定要不要
-// 抢占 esp_wifi_connect()。
+// =====================================================================
+// GET /api/status
+// =====================================================================
+static esp_err_t status_get(httpd_req_t *req)
+{
+    const ui_model_t *m = ui_model_get();
+    char buf[1280];
+    jw_t w = { buf, sizeof(buf), 0, false };
+
+    jw_putc(&w, '{');
+    jw_kv_bool(&w, "ok", true);
+    // 网络
+    jw_kv_bool(&w, "wifi", m->wifi_connected);
+    jw_kv_int (&w, "rssi", m->wifi_rssi);
+    jw_kv_str (&w, "ip",   m->ip);
+    jw_kv_str (&w, "ssid", m->ssid);
+    jw_kv_bool(&w, "ap",   m->ap_active);
+    // 室内传感器
+    jw_kv_f   (&w, "temp", m->indoor_temp, 1);
+    jw_kv_f   (&w, "humi", m->indoor_humi, 0);
+    // 电池
+    jw_kv_int (&w, "batt", m->battery_percent);
+    jw_kv_bool(&w, "charging", m->battery_charging);
+    // 天气
+    jw_kv_str (&w, "city",  m->city);
+    jw_kv_str (&w, "wtext", m->weather_text);
+    jw_kv_str (&w, "wupd",  m->weather_update);
+    jw_kv_f   (&w, "otemp", m->outdoor_temp, 1);
+    jw_kv_f   (&w, "ohumi", m->outdoor_humi, 0);
+    jw_kv_f   (&w, "feels", m->feels_like_temp, 1);
+    jw_kv_int (&w, "tmin",  m->temp_min);
+    jw_kv_int (&w, "tmax",  m->temp_max);
+    {
+        char wind[32];
+        if (m->wind_dir[0]) snprintf(wind, sizeof(wind), "%s %.0f km/h", m->wind_dir, (double) m->wind_speed_kmh);
+        else                wind[0] = 0;
+        jw_kv_str(&w, "wind", wind);
+    }
+    // SD
+    jw_kv_bool(&w, "sd",       m->sd_mounted);
+    jw_kv_int (&w, "sd_used",  m->sd_used_mb);
+    jw_kv_int (&w, "sd_total", m->sd_total_mb);
+    // 设备
+    jw_kv_int (&w, "uptime",     m->uptime_sec);
+    jw_kv_int (&w, "heap",       m->free_heap_kb);
+    jw_kv_int (&w, "flash_free", m->flash_free_kb);
+    jw_kv_str (&w, "chip", m->chip_model);
+    jw_kv_str (&w, "app",  m->app_ver);
+    jw_kv_str (&w, "idf",  m->idf_ver);
+    jw_kv_str (&w, "mac",  m->mac);
+    jw_putc(&w, '}');
+
+    if (w.ovf) return send_err(req, "500 Internal Server Error", "状态数据过长");
+    return send_json(req, "200 OK", buf);
+}
+
+// =====================================================================
+// GET /api/limits —— 容量上限，前端据此禁用"添加"并提示
+// =====================================================================
+static esp_err_t limits_get(httpd_req_t *req)
+{
+    char buf[128];
+    jw_t w = { buf, sizeof(buf), 0, false };
+    jw_putc(&w, '{');
+    jw_kv_int(&w, "marks",  UI_CAL_MAX_MARKS);
+    jw_kv_int(&w, "events", UI_CAL_MAX_EVENTS);
+    jw_kv_int(&w, "labels", UI_CAL_MAX_LABELS);
+    jw_kv_int(&w, "text",   CAL_TEXT_LIMIT);
+    jw_putc(&w, '}');
+    return send_json(req, "200 OK", buf);
+}
+
+// =====================================================================
+// GET /api/config —— 敏感字段（pass/key/host）只回布尔，绝不回明文
+// =====================================================================
+static esp_err_t config_get(httpd_req_t *req)
+{
+    char buf[384];
+    jw_t w = { buf, sizeof(buf), 0, false };
+    jw_putc(&w, '{');
+    jw_kv_bool(&w, "ok", true);
+    jw_kv_str (&w, "ssid", s_cfg.ssid);
+    jw_kv_str (&w, "city", s_cfg.city);
+    // 密码 / API Key / API Host 全都是敏感字段，不回明文
+    // 前端会根据布尔值显示 placeholder，改这些字段时必须完整重填
+    jw_kv_bool(&w, "has_pass", s_cfg.pass[0] != 0);
+    jw_kv_bool(&w, "has_key",  s_cfg.weather_apikey[0] != 0);
+    jw_kv_bool(&w, "has_host", s_cfg.weather_host[0] != 0);
+    jw_putc(&w, '}');
+    if (w.ovf) return send_err(req, "500 Internal Server Error", "配置数据过长");
+    return send_json(req, "200 OK", buf);
+}
+
+// =====================================================================
+// POST /api/config —— 局部更新。只有 ssid/pass 变化才需要重启；
+// 城市/Host/Key 立即生效（weather_task 每轮重读 s_cfg + city dirty 标志）。
+// 密码与 Key 留空 = 保持原值，这样前端不必回显明文也能改其他字段。
+// =====================================================================
+static esp_err_t config_post(httpd_req_t *req)
+{
+    esp_err_t e;
+    char *body = read_body(req, &e);
+    if (!body) return e;
+
+    net_config_t c = s_cfg;      // 以当前配置为基线做局部更新
+    char v[128];
+    bool has;
+    bool net_changed = false, wx_changed = false, city_changed = false;
+
+    // --- SSID ---
+    if (!opt_str(body, "ssid", v, sizeof(c.ssid), &has)) {
+        free(body); return send_err(req, "400 Bad Request", "WiFi 名称过长（最多 32 字节）");
+    }
+    if (has) {
+        if (!v[0]) { free(body); return send_err(req, "400 Bad Request", "WiFi 名称不能为空"); }
+        if (strcmp(c.ssid, v) != 0) { strcpy(c.ssid, v); net_changed = true; }
+    }
+    // --- 密码：留空 = 不修改 ---
+    if (!opt_str(body, "pass", v, sizeof(c.pass), &has)) {
+        free(body); return send_err(req, "400 Bad Request", "WiFi 密码过长（最多 64 字节）");
+    }
+    if (has && v[0]) {
+        if (strcmp(c.pass, v) != 0) { strcpy(c.pass, v); net_changed = true; }
+    }
+    // --- 城市 ---
+    if (!opt_str(body, "city", v, sizeof(c.city), &has)) {
+        free(body); return send_err(req, "400 Bad Request", "城市名过长（最多 31 字节，约 10 个汉字）");
+    }
+    if (has && v[0] && strcmp(c.city, v) != 0) {
+        strcpy(c.city, v); wx_changed = true; city_changed = true;
+    }
+    // --- API Host ---
+    if (!opt_str(body, "host", v, sizeof(c.weather_host), &has)) {
+        free(body); return send_err(req, "400 Bad Request", "API Host 过长（最多 63 字节）");
+    }
+    if (has && strcmp(c.weather_host, v) != 0) { strcpy(c.weather_host, v); wx_changed = true; }
+    // --- API Key：留空 = 不修改 ---
+    if (!opt_str(body, "apikey", v, sizeof(c.weather_apikey), &has)) {
+        free(body); return send_err(req, "400 Bad Request", "API Key 过长（最多 63 字节）");
+    }
+    if (has && v[0] && strcmp(c.weather_apikey, v) != 0) {
+        strcpy(c.weather_apikey, v); wx_changed = true;
+    }
+    free(body);
+
+    if (!net_changed && !wx_changed) return send_ok(req);
+
+    if (!NetBsp_SaveConfig(&c)) return send_err(req, "500 Internal Server Error", "写入 NVS 失败");
+    s_cfg = c;                                  // 内存里的配置同步，天气任务下轮即读到
+    if (city_changed) s_weather_city_dirty = true;
+
+    ESP_LOGI(NET_TAG, "config saved: ssid='%s' city='%s' host='%s' key=%s (net=%d wx=%d)",
+             c.ssid, c.city, c.weather_host,
+             c.weather_apikey[0] ? "set" : "EMPTY", (int) net_changed, (int) wx_changed);
+
+    if (net_changed) {
+        send_ok(req);
+        ESP_LOGW(NET_TAG, "WiFi 配置已变更 → 重启");
+        vTaskDelay(pdMS_TO_TICKS(1200));        // 让响应发完
+        esp_restart();
+        return ESP_OK;
+    }
+    // 天气配置改动无需重启 —— 顺手 kick 一次立即拉取
+    NetBsp_TriggerWeatherFetch();
+    return send_ok(req);
+}
+
+// 拷贝 [src, src+len) 到 dst，超出 cap 时**按 UTF-8 字符边界**回退。
+// SD 上的旧文件可能有超长文字，若截在多字节字符中间会产生非法 UTF-8，
+// 整个 /api/calendar 响应就 JSON.parse 失败 → 页面全白。
+static void copy_utf8(char *dst, size_t cap, const char *src, size_t len)
+{
+    if (len >= cap) {
+        len = cap - 1;
+        // 退到首字节（非 10xxxxxx）为止，丢掉不完整的尾字符
+        while (len > 0 && ((unsigned char) src[len] & 0xC0) == 0x80) len--;
+    }
+    memcpy(dst, src, len);
+    dst[len] = 0;
+}
+
+// =====================================================================
+// GET /api/calendar —— 把 SD 上的三段字符串转成 JSON 数组
+// =====================================================================
+static esp_err_t calendar_get(httpd_req_t *req)
+{
+    static char cm[CAL_MARKS_BUF], ce[CAL_EVENTS_BUF], cl[CAL_LABELS_BUF];
+    cal_read_file(cm, sizeof(cm), ce, sizeof(ce), cl, sizeof(cl));
+
+    int cap = 3072;
+    char *out = (char *) malloc(cap);
+    if (!out) return send_err(req, "500 Internal Server Error", "设备内存不足");
+    jw_t w = { out, cap, 0, false };
+
+    jw_putc(&w, '{');
+    jw_kv_bool(&w, "ok", true);
+    jw_kv_bool(&w, "sd", ui_model_get()->sd_mounted);
+
+    // marks: "MM-DD,MM-DD,..."
+    jw_key(&w, "marks");
+    jw_putc(&w, '[');
+    for (const char *p = cm; *p; ) {
+        const char *sep = strchr(p, ',');
+        size_t len = sep ? (size_t)(sep - p) : strlen(p);
+        if (len) {
+            char t[16];
+            copy_utf8(t, sizeof(t), p, len);
+            jw_comma(&w);
+            jw_qstr(&w, t);
+        }
+        if (!sep) break;
+        p = sep + 1;
+    }
+    jw_putc(&w, ']');
+
+    // events: "MM-DD=内容;..."
+    jw_key(&w, "events");
+    jw_putc(&w, '[');
+    for (const char *p = ce; *p; ) {
+        const char *sep = strchr(p, ';');
+        const char *stop = sep ? sep : (p + strlen(p));
+        const char *eq = memchr(p, '=', (size_t)(stop - p));
+        if (eq) {
+            char d[16], t[UI_CAL_TEXT_MAX];
+            copy_utf8(d, sizeof(d), p, (size_t)(eq - p));
+            copy_utf8(t, sizeof(t), eq + 1, (size_t)(stop - eq - 1));
+            jw_comma(&w);
+            jw_putc(&w, '{');
+            jw_kv_str(&w, "date", d);
+            jw_kv_str(&w, "text", t);
+            jw_putc(&w, '}');
+        }
+        if (!sep) break;
+        p = sep + 1;
+    }
+    jw_putc(&w, ']');
+
+    // labels: "文字;文字;..."
+    jw_key(&w, "labels");
+    jw_putc(&w, '[');
+    for (const char *p = cl; *p; ) {
+        const char *sep = strchr(p, ';');
+        size_t len = sep ? (size_t)(sep - p) : strlen(p);
+        if (len) {
+            char t[UI_CAL_TEXT_MAX];
+            copy_utf8(t, sizeof(t), p, len);
+            jw_comma(&w);
+            jw_qstr(&w, t);
+        }
+        if (!sep) break;
+        p = sep + 1;
+    }
+    jw_putc(&w, ']');
+    jw_putc(&w, '}');
+
+    esp_err_t r = w.ovf ? send_err(req, "500 Internal Server Error", "日历数据过长")
+                        : send_json(req, "200 OK", out);
+    free(out);
+    return r;
+}
+
+// "MM-DD" 校验
+static bool valid_mmdd(const char *s)
+{
+    if (strlen(s) != 5 || s[2] != '-') return false;
+    for (int i = 0; i < 5; i++) if (i != 2 && (s[i] < '0' || s[i] > '9')) return false;
+    int m = (s[0] - '0') * 10 + (s[1] - '0');
+    int d = (s[3] - '0') * 10 + (s[4] - '0');
+    return m >= 1 && m <= 12 && d >= 1 && d <= 31;
+}
+
+// 文字校验：分隔符会破坏 SD 的按行 / 分号 / 等号编码，必须拒绝而不是存坏
+static const char *check_text(const char *t)
+{
+    if (!t[0]) return "内容不能为空";
+    if (strpbrk(t, ";=,\r\n")) return "内容不能包含 ; = , 或换行";
+    if (strlen(t) > CAL_TEXT_LIMIT) return "内容过长";
+    return NULL;
+}
+
+// =====================================================================
+// POST /api/calendar —— 校验后写 SD 并立即生效
+// 超出 UI 容量 / 含非法字符 → 400 并说明是哪一条，不再"存了但设备端丢弃"
+// =====================================================================
+static esp_err_t calendar_post(httpd_req_t *req)
+{
+    if (!ui_model_get()->sd_mounted)
+        return send_err(req, "409 Conflict", "未检测到 SD 卡，无法保存日历数据");
+
+    esp_err_t e;
+    char *body = read_body(req, &e);
+    if (!body) return e;
+
+    static char marks[CAL_MARKS_BUF], events[CAL_EVENTS_BUF], labels[CAL_LABELS_BUF];
+    marks[0] = events[0] = labels[0] = 0;
+    char msg[128];
+
+#define FAIL(...) do { snprintf(msg, sizeof(msg), __VA_ARGS__); free(body); \
+                       return send_err(req, "400 Bad Request", msg); } while (0)
+
+    // --- marks ---
+    const char *arr = js_member(body, "marks");
+    if (arr) {
+        const char *it = arr;
+        int n = 0;
+        for (const char *el; (el = js_arr_next(&it)) != NULL; ) {
+            char d[16];
+            if (js_str(el, d, sizeof(d)) < 0 || !valid_mmdd(d)) FAIL("第 %d 个标记日期格式不正确", n + 1);
+            if (++n > UI_CAL_MAX_MARKS) FAIL("标记日期最多 %d 条，请先删除一些", UI_CAL_MAX_MARKS);
+            if (marks[0]) strcat(marks, ",");
+            strcat(marks, d);
+        }
+    }
+    // --- events ---
+    arr = js_member(body, "events");
+    if (arr) {
+        const char *it = arr;
+        int n = 0;
+        for (const char *el; (el = js_arr_next(&it)) != NULL; ) {
+            char d[16], t[UI_CAL_TEXT_MAX];
+            if (js_str(js_member(el, "date"), d, sizeof(d)) < 0 || !valid_mmdd(d))
+                FAIL("第 %d 条预定的日期格式不正确", n + 1);
+            if (js_str(js_member(el, "text"), t, sizeof(t)) < 0)
+                FAIL("第 %d 条预定的内容过长（最多 %d 字节）", n + 1, CAL_TEXT_LIMIT);
+            const char *bad = check_text(t);
+            if (bad) FAIL("第 %d 条预定：%s", n + 1, bad);
+            if (++n > UI_CAL_MAX_EVENTS) FAIL("预定内容最多 %d 条，请先删除一些", UI_CAL_MAX_EVENTS);
+            if (events[0]) strcat(events, ";");
+            strcat(events, d); strcat(events, "="); strcat(events, t);
+        }
+    }
+    // --- labels ---
+    arr = js_member(body, "labels");
+    if (arr) {
+        const char *it = arr;
+        int n = 0;
+        for (const char *el; (el = js_arr_next(&it)) != NULL; ) {
+            char t[UI_CAL_TEXT_MAX];
+            if (js_str(el, t, sizeof(t)) < 0)
+                FAIL("第 %d 个标签过长（最多 %d 字节）", n + 1, CAL_TEXT_LIMIT);
+            const char *bad = check_text(t);
+            if (bad) FAIL("第 %d 个标签：%s", n + 1, bad);
+            if (++n > UI_CAL_MAX_LABELS) FAIL("随机标签最多 %d 条，请先删除一些", UI_CAL_MAX_LABELS);
+            if (labels[0]) strcat(labels, ";");
+            strcat(labels, t);
+        }
+    }
+#undef FAIL
+    free(body);
+
+    if (!cal_save_to_sd(marks, events, labels))
+        return send_err(req, "500 Internal Server Error", "写入 SD 卡失败（卡满或只读？）");
+
+    // setter 只写静态数组、不碰 LVGL，无需持锁；锁只保护 apply。
+    // 锁超时也不影响：数组已更新，1s tick 会用新数据重绘。
+    ui_calendar_set_marks(marks);
+    ui_calendar_set_events(events);
+    ui_calendar_set_labels(labels);
+    if (Lvgl_lock(200)) {
+        ui_pages_apply_locked();
+        Lvgl_unlock();
+    }
+    ESP_LOGI(NET_TAG, "cal saved marks='%s' events='%s' labels='%s'", marks, events, labels);
+    return send_ok(req);
+}
+
+// =====================================================================
+// GET /api/scan —— {ok:true,aps:[{ssid,rssi,auth}]}；失败带原因，前端能区分
+// "附近没有网络" 和 "WiFi 忙 / 未初始化"
+//
+// 正在做 web 扫描时置 s_scanning —— wifi_evt 的 disconnect 处理里查询它决定
+// 要不要抢占 esp_wifi_connect()。
+// =====================================================================
 static esp_err_t scan_get(httpd_req_t *req)
 {
-    httpd_resp_set_type(req, "application/json; charset=utf-8");
+    if (!s_wifi_common_inited)
+        return send_err(req, "503 Service Unavailable", "WiFi 尚未初始化，请稍后重试");
 
-    if (!s_wifi_common_inited) {
-        ESP_LOGW(NET_TAG, "scan: wifi not inited");
-        httpd_resp_sendstr(req, "[]");
-        return ESP_OK;
-    }
     // 一次一个客户端扫描
-    if (xSemaphoreTake(s_scan_mux, pdMS_TO_TICKS(1000)) != pdTRUE) {
-        ESP_LOGW(NET_TAG, "scan: mux busy");
-        httpd_resp_sendstr(req, "[]");
-        return ESP_OK;
-    }
+    if (xSemaphoreTake(s_scan_mux, pdMS_TO_TICKS(1000)) != pdTRUE)
+        return send_err(req, "503 Service Unavailable", "已有扫描在进行中，请稍后重试");
 
     // 关键：STA 处在 CONNECTING（自动重连）状态时，esp_wifi_scan_start 会立刻返回
     // ESP_ERR_WIFI_STATE 拒绝扫描 —— 得先 disconnect 让状态机回到 IDLE。
@@ -155,8 +797,7 @@ static esp_err_t scan_get(httpd_req_t *req)
     s_scanning = true;
     if (!sta_online) {
         esp_wifi_disconnect();
-        // 给 STA 一小段时间从 CONNECTING 掉到 IDLE，扫描才能启动
-        vTaskDelay(pdMS_TO_TICKS(150));
+        vTaskDelay(pdMS_TO_TICKS(150));   // 等 STA 从 CONNECTING 掉到 IDLE
     }
 
     // ALL_CHANNEL_SCAN 主动扫可以看到隐藏之外的绝大多数 AP
@@ -167,172 +808,200 @@ static esp_err_t scan_get(httpd_req_t *req)
     sc.scan_time.active.max = 300;
 
     esp_err_t err = esp_wifi_scan_start(&sc, true);   // blocking
-    if (err != ESP_OK) {
-        ESP_LOGW(NET_TAG, "scan_start fail: %s (0x%x)", esp_err_to_name(err), (unsigned)err);
-        s_scanning = false;
-        // 只有我们主动断过才需要重连
-        if (s_want_sta && !sta_online) esp_wifi_connect();
-        xSemaphoreGive(s_scan_mux);
-        httpd_resp_sendstr(req, "[]");
-        return ESP_OK;
-    }
-
     uint16_t n = 0;
-    esp_wifi_scan_get_ap_num(&n);
-    ESP_LOGI(NET_TAG, "scan done: %u APs", (unsigned)n);
-    if (n > 24) n = 24;                                // 前 24 个够用
-    wifi_ap_record_t *recs = calloc(n ? n : 1, sizeof(wifi_ap_record_t));
-    if (!recs) {
-        s_scanning = false;
-        if (s_want_sta && !sta_online) esp_wifi_connect();
-        xSemaphoreGive(s_scan_mux);
-        httpd_resp_sendstr(req, "[]");
-        return ESP_OK;
+    wifi_ap_record_t *recs = NULL;
+    if (err == ESP_OK) {
+        esp_wifi_scan_get_ap_num(&n);
+        if (n > 24) n = 24;                            // 前 24 个够用
+        recs = calloc(n ? n : 1, sizeof(wifi_ap_record_t));
+        if (recs) esp_wifi_scan_get_ap_records(&n, recs);
+        else      n = 0;
     }
-    esp_wifi_scan_get_ap_records(&n, recs);
     // 扫描结束 —— 若之前我们主动断开过 STA，这里恢复自动重连
     s_scanning = false;
     if (s_want_sta && !sta_online) esp_wifi_connect();
     xSemaphoreGive(s_scan_mux);
 
-    // 组 JSON —— 一次装完发出去，简单可靠
-    // 每条最多 ~120B，24 条 < 4KB
-    char *out = malloc(4096);
-    if (!out) { free(recs); httpd_resp_sendstr(req, "[]"); return ESP_OK; }
-    int p = 0;
-    out[p++] = '[';
-    // 去重（部分路由会在多个信道回应）
-    for (int i = 0; i < n && p < 4090; i++) {
-        // skip duplicates
-        bool dup = false;
+    if (err != ESP_OK) {
+        ESP_LOGW(NET_TAG, "scan_start fail: %s (0x%x)", esp_err_to_name(err), (unsigned) err);
+        free(recs);
+        return send_err(req, "503 Service Unavailable", "WiFi 忙，扫描未能启动，请稍后重试");
+    }
+    if (!recs) return send_err(req, "500 Internal Server Error", "设备内存不足");
+    ESP_LOGI(NET_TAG, "scan done: %u APs", (unsigned) n);
+
+    int cap = 4096;
+    char *out = (char *) malloc(cap);
+    if (!out) { free(recs); return send_err(req, "500 Internal Server Error", "设备内存不足"); }
+    jw_t w = { out, cap, 0, false };
+    jw_putc(&w, '{');
+    jw_kv_bool(&w, "ok", true);
+    jw_key(&w, "aps");
+    jw_putc(&w, '[');
+    for (int i = 0; i < n && !w.ovf; i++) {
+        if (recs[i].ssid[0] == 0) continue;                       // 隐藏 SSID
+        bool dup = false;                                        // 部分路由多信道重复回应
         for (int j = 0; j < i; j++) {
-            if (strcmp((const char *)recs[j].ssid, (const char *)recs[i].ssid) == 0) {
-                dup = true; break;
-            }
+            if (strcmp((const char *) recs[j].ssid, (const char *) recs[i].ssid) == 0) { dup = true; break; }
         }
         if (dup) continue;
-        if (recs[i].ssid[0] == 0) continue;   // 隐藏 SSID
-        if (out[p - 1] != '[') out[p++] = ',';
-        out[p++] = '{';
-        p += snprintf(out + p, 4096 - p, "\"ssid\":");
-        p += append_json_str(out + p, 4096 - p, (const char *)recs[i].ssid);
-        p += snprintf(out + p, 4096 - p, ",\"rssi\":%d,\"auth\":%d}",
-                      (int)recs[i].rssi, (int)recs[i].authmode);
+        jw_comma(&w);
+        jw_putc(&w, '{');
+        jw_kv_str (&w, "ssid", (const char *) recs[i].ssid);
+        jw_kv_int (&w, "rssi", recs[i].rssi);
+        jw_kv_bool(&w, "auth", recs[i].authmode != WIFI_AUTH_OPEN);
+        jw_putc(&w, '}');
     }
-    if (p < 4090) out[p++] = ']';
-    out[p] = 0;
-
-    httpd_resp_sendstr(req, out);
-    free(out);
+    jw_putc(&w, ']');
+    jw_putc(&w, '}');
     free(recs);
-    return ESP_OK;
+
+    // 溢出就少报几个，也别发半截 JSON —— 但 24 条 × ~70B 远小于 4KB，实际到不了
+    esp_err_t r = w.ovf ? send_err(req, "500 Internal Server Error", "扫描结果过长")
+                        : send_json(req, "200 OK", out);
+    free(out);
+    return r;
 }
 
-static esp_err_t save_post(httpd_req_t *req)
+// =====================================================================
+// POST /api/weather_refresh · /api/reboot · /api/forget
+// =====================================================================
+static esp_err_t weather_refresh_post(httpd_req_t *req)
 {
-    char body[512] = {0};
-    int received = 0, r;
-    while (received < (int) sizeof(body) - 1) {
-        r = httpd_req_recv(req, body + received, sizeof(body) - 1 - received);
-        if (r <= 0) break;
-        received += r;
-    }
-    body[received] = 0;
+    NetBsp_TriggerWeatherFetch();
+    ESP_LOGI(NET_TAG, "portal: 手动触发天气拉取");
+    return send_ok(req);
+}
 
-    net_config_t c = {0};
-    parse_form_field(body, "ssid",     c.ssid,             sizeof(c.ssid));
-    parse_form_field(body, "pass",     c.pass,             sizeof(c.pass));
-    parse_form_field(body, "city",     c.city,             sizeof(c.city));
-    parse_form_field(body, "apikey",   c.weather_apikey,   sizeof(c.weather_apikey));
-    parse_form_field(body, "host",     c.weather_host,     sizeof(c.weather_host));
-
-    if (c.ssid[0] == 0) {
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "ssid required");
-        return ESP_OK;
-    }
-    bool save_ok = NetBsp_SaveConfig(&c);
-    // 立刻读回验证是否真正落盘
-    char vh_host[64] = {0}; size_t vsz = sizeof(vh_host);
-    nvs_handle_t vh;
-    if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &vh) == ESP_OK) {
-        nvs_get_str(vh, "weather_host", vh_host, &vsz);
-        nvs_close(vh);
-    }
-    ESP_LOGI(NET_TAG, "config saved ok=%d ssid='%s' host='%s' city='%s' key=%s | verify_read host='%s', rebooting…",
-             save_ok, c.ssid, c.weather_host, c.city,
-             c.weather_apikey[0] ? "set" : "EMPTY", vh_host[0] ? vh_host : "EMPTY");
-    httpd_resp_set_type(req, "text/html; charset=utf-8");
-    httpd_resp_sendstr(req,
-        "<html><body><h3>Saved. Rebooting in 2s...</h3></body></html>");
-    vTaskDelay(pdMS_TO_TICKS(2000));
+static esp_err_t reboot_post(httpd_req_t *req)
+{
+    send_ok(req);
+    ESP_LOGW(NET_TAG, "portal: 用户请求重启");
+    vTaskDelay(pdMS_TO_TICKS(1200));
     esp_restart();
     return ESP_OK;
 }
 
-// POST /save_cal —— 日历数据（标记/预定/标签）存 SD 卡，立即应用，不重启。
-// 表单字段：cal_marks / cal_events / cal_labels（与旧格式一致，前端负责编码）。
-// 中文 URL 编码后体积约 3 倍，用 4KB 动态缓冲。SD 未挂载返回 409。
-static esp_err_t save_cal_post(httpd_req_t *req)
+static esp_err_t forget_post(httpd_req_t *req)
 {
-    char *body = (char *) malloc(4096);
-    if (!body) return httpd_resp_send_500(req);
-    int received = 0, r;
-    while (received < 4096 - 1) {
-        r = httpd_req_recv(req, body + received, 4096 - 1 - received);
-        if (r <= 0) break;
-        received += r;
-    }
-    body[received] = 0;
-
-    static char marks[128], events[512], labels[512];
-    parse_form_field(body, "cal_marks",  marks,  sizeof(marks));
-    parse_form_field(body, "cal_events", events, sizeof(events));
-    parse_form_field(body, "cal_labels", labels, sizeof(labels));
-    free(body);
-
-    if (!ui_model_get()->sd_mounted) {
-        httpd_resp_set_status(req, "409 Conflict");
-        httpd_resp_set_type(req, "text/plain; charset=utf-8");
-        httpd_resp_sendstr(req, "无 SD 卡，无法保存日历数据");
-        return ESP_OK;
-    }
-
-    bool ok = cal_save_to_sd(marks, events, labels);
-    if (ok) {
-        // setter 只写静态数组、不碰 LVGL，无需持锁；锁只保护 apply。
-        // 锁超时也不影响：数组已更新，1s tick 会用新数据重绘。
-        ui_calendar_set_marks(marks);
-        ui_calendar_set_events(events);
-        ui_calendar_set_labels(labels);
-        if (Lvgl_lock(200)) {
-            ui_pages_apply_locked();
-            Lvgl_unlock();
-        }
-    }
-    ESP_LOGI(NET_TAG, "cal saved ok=%d marks='%s' events='%s' labels='%s'",
-             ok, marks, events, labels);
-
-    httpd_resp_set_type(req, "text/plain; charset=utf-8");
-    httpd_resp_sendstr(req, ok ? "OK" : "写 SD 失败");
+    NetBsp_ForgetWifi();
+    send_ok(req);
+    ESP_LOGW(NET_TAG, "portal: 用户清除 WiFi 凭据 → 重启进配网模式");
+    vTaskDelay(pdMS_TO_TICKS(1200));
+    esp_restart();
     return ESP_OK;
 }
 
+// =====================================================================
+// GET /api/data/csv —— 从文件尾部倒读最新 500 行数据
+//
+// 定位起点用**块倒读**：每次往前读 1KB 数一遍换行符。旧实现是每字节一次
+// fseek+fgetc，500 行（约 35KB）要 3.5 万次 FATFS 调用，SD 上要好几秒。
+// 现在同样的活儿只要 ~35 次读，快两个数量级。
+//
+// 缓冲全部放在**静态区**而不是任务栈：httpd 任务栈只有 8KB，原先在栈上开
+// 8KB 数组必然溢栈。发送块取 1460B = 一个 TCP MSS，比 8KB 更贴合 5760B 窗口。
+// 同一时刻只有一个 httpd 任务跑 handler，静态缓冲不存在竞争。
+// =====================================================================
+#define MAX_CSV_ROWS   500
+#define CSV_SCAN_SZ    1024    // 倒着定位行首用的块
+#define CSV_SEND_SZ    1460    // 一个以太网 MSS
+
+static esp_err_t csv_get(httpd_req_t *req)
+{
+    const ui_model_t *m = ui_model_get();
+    if (!m->sd_mounted)
+        return send_err(req, "409 Conflict", "SD 卡未挂载，暂无数据");
+
+    FILE *f = fopen("/sdcard/rlcd/weather_log.csv", "rb");
+    if (!f) return send_err(req, "404 Not Found", "暂无数据");
+
+    static char scan[CSV_SCAN_SZ];
+
+    if (fseek(f, 0, SEEK_END) != 0) { fclose(f); return send_err(req, "500 Internal Server Error", "读取失败"); }
+    long size = ftell(f);
+    if (size < 0) { fclose(f); return send_err(req, "500 Internal Server Error", "读取失败"); }
+
+    // 从尾部往前，一块一块数换行符，数到第 MAX_CSV_ROWS 个就是起点
+    long pos = size;
+    int  rows = 0;
+    while (pos > 0 && rows < MAX_CSV_ROWS) {
+        long chunk = (pos > CSV_SCAN_SZ) ? CSV_SCAN_SZ : pos;
+        pos -= chunk;
+        if (fseek(f, pos, SEEK_SET) != 0) break;
+        size_t got = fread(scan, 1, (size_t) chunk, f);
+        // 块内从后往前找，命中第 MAX_CSV_ROWS 个换行就把 pos 定在它之后
+        for (long i = (long) got - 1; i >= 0; i--) {
+            if (scan[i] != '\n') continue;
+            if (++rows >= MAX_CSV_ROWS) { pos += i + 1; break; }
+        }
+    }
+    // pos==0 表示整个文件都要发（含 header 行）；否则 pos 落在某行行首
+    if (fseek(f, pos, SEEK_SET) != 0) { fclose(f); return send_err(req, "500 Internal Server Error", "读取失败"); }
+
+    // 不是从文件头发的话，前端 parseCsvStream 会 shift() 掉第一行当 header ——
+    // 这里补一行真正的表头，否则最旧的一条数据会被前端丢掉。
+    char disp[128];
+    struct tm ti; time_t now = time(NULL);
+    localtime_r(&now, &ti);
+    snprintf(disp, sizeof(disp), "attachment; filename=\"rlcd_weather_%04d-%02d-%02d.csv\"",
+             ti.tm_year + 1900, ti.tm_mon + 1, ti.tm_mday);
+    httpd_resp_set_type(req, "text/csv; charset=utf-8");
+    httpd_resp_set_hdr(req, "Content-Disposition", disp);
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+
+    esp_err_t r = ESP_OK;
+    if (pos > 0) {
+        static const char hdr[] = "timestamp,indoor_temp,indoor_humi,outdoor_temp,"
+                                  "outdoor_humi,weather,city,wifi_rssi\n";
+        if (httpd_resp_send_chunk(req, hdr, sizeof(hdr) - 1) != ESP_OK) r = ESP_FAIL;
+    }
+
+    static char send[CSV_SEND_SZ];
+    size_t nr;
+    while (r == ESP_OK && (nr = fread(send, 1, sizeof(send), f)) > 0) {
+        if (httpd_resp_send_chunk(req, send, nr) != ESP_OK) {
+            r = ESP_FAIL;
+            break;
+        }
+    }
+    httpd_resp_send_chunk(req, NULL, 0);
+    fclose(f);
+    ESP_LOGI(NET_TAG, "csv: sent latest %d rows (from offset %ld/%ld)", rows, pos, size);
+    return r;
+}
+
+// =====================================================================
 void config_httpd_start(void)
 {
     if (s_httpd) return;
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
-    cfg.max_uri_handlers = 8;
-    cfg.stack_size       = 8 * 1024;   // JSON 生成 + snprintf 需要点栈
-    // scan_get 阻塞 ~2-3s，把发送/接收 timeout 拉长避免浏览器提前断连
+    cfg.max_uri_handlers  = 16;
+    cfg.stack_size        = 8 * 1024;   // JSON 生成 + snprintf 需要点栈
+    // scan 阻塞 ~2-3s，把发送/接收 timeout 拉长避免浏览器提前断连
     cfg.recv_wait_timeout = 10;
     cfg.send_wait_timeout = 10;
     if (httpd_start(&s_httpd, &cfg) != ESP_OK) return;
-    httpd_uri_t u_root = { .uri = "/",     .method = HTTP_GET,  .handler = root_get };
-    httpd_uri_t u_scan = { .uri = "/scan", .method = HTTP_GET,  .handler = scan_get };
-    httpd_uri_t u_save = { .uri = "/save", .method = HTTP_POST, .handler = save_post };
-    httpd_uri_t u_cal  = { .uri = "/save_cal", .method = HTTP_POST, .handler = save_cal_post };
-    httpd_register_uri_handler(s_httpd, &u_root);
-    httpd_register_uri_handler(s_httpd, &u_scan);
-    httpd_register_uri_handler(s_httpd, &u_save);
-    httpd_register_uri_handler(s_httpd, &u_cal);
+
+    static const httpd_uri_t routes[] = {
+        { .uri = "/",                    .method = HTTP_GET,  .handler = root_get },
+        { .uri = "/chart.umd.min.js",    .method = HTTP_GET,  .handler = chart_js_get },
+        { .uri = "/api/status",          .method = HTTP_GET,  .handler = status_get },
+        { .uri = "/api/limits",          .method = HTTP_GET,  .handler = limits_get },
+        { .uri = "/api/config",          .method = HTTP_GET,  .handler = config_get },
+        { .uri = "/api/config",          .method = HTTP_POST, .handler = config_post },
+        { .uri = "/api/calendar",        .method = HTTP_GET,  .handler = calendar_get },
+        { .uri = "/api/calendar",        .method = HTTP_POST, .handler = calendar_post },
+        { .uri = "/api/scan",            .method = HTTP_GET,  .handler = scan_get },
+        { .uri = "/api/weather_refresh", .method = HTTP_POST, .handler = weather_refresh_post },
+        { .uri = "/api/reboot",          .method = HTTP_POST, .handler = reboot_post },
+        { .uri = "/api/forget",          .method = HTTP_POST, .handler = forget_post },
+        { .uri = "/api/data/csv",        .method = HTTP_GET,  .handler = csv_get },
+    };
+    for (size_t i = 0; i < sizeof(routes) / sizeof(routes[0]); i++) {
+        httpd_register_uri_handler(s_httpd, &routes[i]);
+    }
+    // 手机的 Captive Portal 探测路径（/generate_204、/hotspot-detect.html 等）
+    // 统一 302 回首页，系统就会自动弹出配置页
+    httpd_register_err_handler(s_httpd, HTTPD_404_NOT_FOUND, not_found);
 }

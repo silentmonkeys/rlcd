@@ -3,7 +3,7 @@
 // 组件按职责拆为多个源文件（对外 API 仍只在 net_bsp.h）：
 //   net_bsp.c       本文件：全局状态定义、NVS 配置读写、启动编排、无网看门狗
 //   net_wifi.c      WiFi STA/AP 事件、公共初始化、配置填充、SNTP 校时
-//   net_portal.c    SoftAP 配网门户 HTTP 服务器（HTML 模板见 portal_page.h）
+//   net_portal.c    管理 / 配网门户 HTTP 服务器（前端静态资源见 portal_assets.h）
 //   net_weather.c   QWeather API 拉取 + weather_task
 //   net_calendar.c  日历配置存 SD 卡（原子写）
 //   net_internal.h  组件内共享声明
@@ -55,6 +55,7 @@ bool               s_wifi_common_inited = false;
 bool               s_want_sta   = false;
 int64_t            s_last_disconnected_us = 0;  // STA 断开时间戳(us)；0=已连/未启
 bool               s_offline_setup_shown  = false;
+volatile bool      s_weather_city_dirty   = false; // 改过城市 → weather_task 重解析
 
 // ------------ NVS ----------------------------------------------------
 bool NetBsp_LoadConfig(net_config_t *out)

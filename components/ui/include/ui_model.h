@@ -33,7 +33,9 @@ typedef struct {
     // ---- 天气详情页用（QWeather 拉取时可选填） ----
     float outdoor_humi;             // 室外湿度 %
     float wind_speed_kmh;           // 风速 km/h
-    char  wind_dir[8];              // "NE" / "S" 等
+    // QWeather windDir 是中文风向，最长 "无持续风向" = 15 字节；
+    // 原来给 8 字节，"东北风"(9B) 被截成 7B 就断在汉字中间 → 显示 "东北□"
+    char  wind_dir[20];             // "东北风" / "无持续风向"
     int   cloud_pct;                // 云量百分比 0..100，-1 表示无数据
     int   pressure_hpa;             // 气压 hPa
     int   visibility_km;            // 能见度 km

@@ -1,0 +1,124 @@
+<!doctype html><html lang=zh-CN><head><meta charset=utf-8>
+<meta name=viewport content='width=device-width,initial-scale=1'>
+<meta name=theme-color content='#111'>
+<title>RLCD 控制台</title>
+<style>{{STYLE}}</style>
+</head><body>
+
+<header><h1>RLCD 控制台</h1><span id=hdrdot class=dot></span><span id=hdrnet>连接中…</span></header>
+
+<nav class=tabs>
+<button class='tab active' data-t=0>状态</button>
+<button class=tab data-t=1>网络</button>
+<button class=tab data-t=2>天气</button>
+<button class=tab data-t=3>日历</button>
+<button class=tab data-t=4>数据</button>
+<button class=tab data-t=5>系统</button>
+</nav>
+
+<section class='page active' id=p0><div class=grid id=stat></div>
+<p class=hint>每 5 秒自动刷新</p></section>
+
+<section class=page id=p1>
+<div class=card><div class=cardhd><b>附近的 WiFi</b>
+<button class='btn sm' id=btnscan>扫描</button></div>
+<div id=scan class=scan></div></div>
+<div class=card>
+<label for=f_ssid>WiFi 名称</label>
+<div class=inwrap><input id=f_ssid maxlength=32 autocomplete=off type=text></div>
+<label for=f_pass>WiFi 密码</label>
+<div class=inwrap>
+<input id=f_pass type=password maxlength=64 autocomplete=new-password placeholder='••••••••'>
+<button type=button class='pwbtn hide' id=p_toggle>•</button>
+</div>
+<p class=hint>ESP32-S3 只支持 2.4GHz 频段。</p>
+<button class='btn primary' id=btnnet>保存并重启</button>
+</div></section>
+
+<section class=page id=p2>
+<div class=card><div class=cardhd><b>当前读数</b>
+<button class='btn sm' id=btnwx>立即刷新</button></div>
+<div class=grid id=wxnow></div></div>
+<div class=card>
+<label for=f_city>城市</label>
+<div class=inwrap><input id=f_city maxlength=31 placeholder='北京 或城市 ID' type=text></div>
+<label for=f_host>API Host</label>
+<div class=inwrap>
+<input id=f_host type=password maxlength=63 placeholder='••••••••'>
+<button type=button class='pwbtn hide' id=h_toggle>•</button>
+</div>
+<label for=f_key>API Key</label>
+<div class=inwrap>
+<input id=f_key type=password maxlength=63 placeholder='••••••••'>
+<button type=button class='pwbtn hide' id=k_toggle>•</button>
+</div>
+<button class='btn primary' id=btnwxsave>保存设置</button>
+<p class=hint>天气配置立即生效，不需要重启。</p>
+</div></section>
+
+<section class=page id=p3>
+<div class=card id=nosd hidden><b class=err>未检测到 SD 卡</b>
+<p class=hint>日历数据保存在 SD 卡上。请插入 SD 卡后刷新。</p></div>
+<div id=calbody>
+<div class=calgrid>
+<div class=card collapsed>
+<div class=cardhd><b>标记日期</b><span class=cnt id=c_marks></span>
+<button type=button class=collapse id=marks_btn onclick="toggleCard('marks')">展开 ›</button></div>
+<div class=collapsible style="max-height:1000px">
+<div id=marks class=list></div>
+<div class=add><div class=inwrap><input type=date id=i_mark></div>
+<button class='btn sm' id=btnmark>添加</button></div>
+</div></div>
+<div class=card collapsed>
+<div class=cardhd><b>预定内容</b><span class=cnt id=c_events></span>
+<button type=button class=collapse id=events_btn onclick="toggleCard('events')">展开 ›</button></div>
+<div class=collapsible style="max-height:1000px">
+<div id=events class=list></div>
+<div class='add two'>
+<div class=inwrap><input type=text id=i_etext class=tx placeholder=内容文字></div>
+<div class=inwrap><input type=date id=i_edate class=dt></div>
+<button class='btn sm bt' id=btnevt>添加</button>
+</div></div></div>
+<div class=card collapsed>
+<div class=cardhd><b>随机标签</b><span class=cnt id=c_labels></span>
+<button type=button class=collapse id=labels_btn onclick="toggleCard('labels')">展开 ›</button></div>
+<div class=collapsible style="max-height:1000px">
+<label class=sw><input type=checkbox id=lab_on><span>启用</span></label>
+<div id=labbox hidden><div id=labels class=list></div>
+<div class=add><div class=inwrap><input type=text id=i_label placeholder=标签文字></div>
+<button class='btn sm' id=btnlab>添加</button></div></div></div></div>
+</div>
+<button class='btn primary' id=btncal>保存日历</button>
+<p class=hint>写入 SD 卡并立即生效，不重启。</p>
+</div></section>
+
+<section class=page id=p4>
+<div class=card><div class=cardhd><b>环境温湿度趋势</b>
+<select id=range_sel class=auto>
+<option value=6>1 小时</option>
+<option value=18>3 小时</option>
+<option value=36>6 小时</option>
+<option value=72>12 小时</option>
+<option value=144>24 小时</option>
+</select></div>
+<div class=chartwrap style="height:260px"><canvas id=cv></canvas></div>
+</div>
+<div class=card><b>数据下载</b>
+<p class=hint>CSV 格式：时间,室内温,室内湿,室外温,室外湿,天气,城市,RSSI</p>
+<button class='btn primary' id=btndl>下载全部数据</button>
+</div></section>
+
+<section class=page id=p5>
+<div class=card><div class=grid id=sysinfo></div></div>
+<div class=card><b>维护操作</b>
+<button class=btn id=btnreboot>重启设备</button>
+<p class=hint>约 10 秒后重新上线。</p>
+<button class='btn danger' id=btnforget>清除 WiFi 配置</button>
+<p class=warn>清除后设备重启并回到配网模式。</p>
+</div></section>
+
+<div id=toast></div>
+
+<script>var CHART_URL="{{CHART_URL}}";</script>
+<script>{{APP}}</script>
+</body></html>

@@ -43,13 +43,11 @@
 #define DOT_R           3
 #define DOT_SPACING     14
 
-// 最大标注日期数
-#define MAX_MARK_DATES  32
-
-// 底部标签相关上限
-#define MAX_EVENTS       16     // 预定内容条数
-#define MAX_LABELS       16     // 随机预设标签条数
-#define EVENT_TEXT_MAX   32     // 单条预定/标签文字最大字节数（含结尾 0）
+// 容量上限统一在 ui_calendar.h 定义（配网门户校验时共用同一份值）
+#define MAX_MARK_DATES  UI_CAL_MAX_MARKS
+#define MAX_EVENTS      UI_CAL_MAX_EVENTS
+#define MAX_LABELS      UI_CAL_MAX_LABELS
+#define EVENT_TEXT_MAX  UI_CAL_TEXT_MAX
 
 // -------- 页面私有状态 -------------------------------------------
 static lv_obj_t *s_screen = NULL;

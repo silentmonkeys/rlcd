@@ -1,0 +1,558 @@
+<!doctype html><html lang=zh-CN><head><meta charset=utf-8>
+<meta name=viewport content='width=device-width,initial-scale=1'>
+<meta name=theme-color content='#111'>
+<title>RLCD 控制台</title>
+<style>:root{
+--bg:#f4f5f7;--fg:#16181d;--card:#fff;--mut:#9499a3;--line:#e0e3e9;
+--acc:#2563eb;--err:#dc2626;--ok:#059669;--warn:#b45309;
+}
+@media(prefers-color-scheme:dark){:root{
+--bg:#15171c;--fg:#e8eaed;--card:#1e2128;--mut:#9499a3;--line:#2c3038;
+--acc:#609fff;--err:#f87171;--ok:#34d399;--warn:#fbbf24;
+}}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--fg);
+font:14px/1.5 system-ui,-apple-system,'Segoe UI','Noto Sans SC',sans-serif;
+padding-bottom:40px}
+header{display:flex;align-items:center;gap:8px;padding:12px 16px;background:var(--card);
+border-bottom:1px solid var(--line);position:sticky;top:0;z-index:9}
+header h1{font-size:16px;font-weight:600;margin:0;flex:1}
+#hdrnet{font-size:12px;color:var(--mut)}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--mut);flex:none}
+.dot.on{background:var(--ok)}.dot.off{background:var(--err)}
+
+.tabs{display:flex;gap:0;overflow-x:auto;background:var(--card);
+border-bottom:1px solid var(--line);position:sticky;top:47px;z-index:8;
+-webkit-overflow-scrolling:touch;scrollbar-width:none}
+.tabs::-webkit-scrollbar{display:none}
+.tab{flex:1 0 auto;min-width:56px;padding:9px 12px;border:0;background:none;color:var(--mut);
+font:inherit;font-size:13px;cursor:pointer;border-bottom:2px solid transparent}
+.tab.active{color:var(--fg);font-weight:600;border-bottom-color:var(--acc)}
+
+.page{display:none;max-width:580px;margin:0 auto;padding:12px 12px}
+.page.active{display:block}
+
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;
+padding:12px;margin-bottom:10px}
+.cardhd{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.cardhd b{flex:1;font-size:14px;font-weight:600}
+.cnt{font-size:11px;color:var(--mut);font-variant-numeric:tabular-nums}
+.collapse{flex:none;font-size:12px;color:var(--mut);background:none;border:0;
+padding:3px 6px;border-radius:4px;cursor:pointer}
+.collapse:hover{background:var(--bg);color:var(--fg)}
+
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(128px,1fr));gap:8px}
+.kv{background:var(--bg);border-radius:7px;padding:8px 10px;min-width:0}
+.kv .k{font-size:11px;color:var(--mut);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.kv .v{font-size:16px;font-weight:600;font-variant-numeric:tabular-nums;
+overflow-wrap:anywhere;line-height:1.4}
+
+label{display:block;font-size:12px;color:var(--mut);margin:10px 0 4px}
+
+/* ========== 强制：所有输入框 100% 同高同样式 ========== */
+input[type="text"],
+input[type="password"],
+input[type="date"],
+textarea,
+select.w-full{
+width:100%!important;
+height:38px!important;
+padding:0 10px!important;
+font:inherit!important;
+font-size:14px!important;
+color:var(--fg)!important;
+background:var(--bg)!important;
+border:1px solid var(--line)!important;
+border-radius:7px!important}
+
+/* 下拉框在 cardhd 里时自动宽度、高度匹配 */
+select.auto{
+width:auto!important;
+height:30px!important;
+padding:0 24px 0 8px!important;
+font-size:12px!important;
+border-radius:6px!important;
+background:var(--bg)!important;
+border:1px solid var(--line)!important;
+color:var(--fg)!important;
+cursor:pointer}
+
+input:focus,select:focus,textarea:focus{
+outline:2px solid var(--acc)!important;
+outline-offset:-1px!important;
+border-color:var(--acc)!important}
+
+input::placeholder,textarea::placeholder{color:var(--mut)!important;opacity:.4!important}
+
+/* 输入框包裹层 —— .pwbtn 是 absolute，必须有个定位祖先才不会飞到页面角上 */
+.inwrap{position:relative;display:block}
+
+.pwbtn{position:absolute;right:0;top:0;width:36px;height:38px;
+background:none!important;border:0!important;font-size:16px;color:var(--mut);cursor:pointer;
+display:flex;align-items:center;justify-content:center;border-radius:0 7px 7px 0;
+transition:.15s}
+.pwbtn:active{opacity:.5}
+.pwbtn.show{opacity:1;color:var(--fg)}
+.pwbtn.hide{opacity:.4}
+
+.btn{width:100%;margin-top:10px;padding:9px;font:inherit;font-weight:600;cursor:pointer;
+color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:7px}
+.btn:active{transform:translateY(1px)}
+.btn[disabled]{opacity:.5;cursor:progress}
+.btn.primary{background:var(--acc);border-color:var(--acc);color:#fff}
+.btn.danger{background:none;border-color:var(--err);color:var(--err)}
+.btn.sm{width:auto;margin:0;padding:7px 12px;font-size:13px;font-weight:500;flex:none}
+
+.msg{padding:10px;font-size:13px;color:var(--mut);text-align:center}
+.hint{font-size:12px;color:var(--mut);margin:6px 0 0}
+.warn{font-size:12px;color:var(--warn);margin:6px 0 0}
+.err{color:var(--err)}
+
+.scan:empty{display:none}
+.scan{margin-top:8px;border:1px solid var(--line);border-radius:7px;overflow:hidden}
+.ap{display:flex;align-items:center;gap:8px;width:100%;padding:9px 10px;border:0;
+background:var(--card);color:var(--fg);font:inherit;text-align:left;cursor:pointer;
+border-top:1px solid var(--line)}
+.ap:first-child{border-top:0}.ap:hover{background:var(--bg)}
+.ap .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ap .rs{font-size:12px;color:var(--mut);font-variant-numeric:tabular-nums;flex:none}
+.ap .cur{font-size:11px;color:var(--ok);flex:none}
+
+.list:empty::after{content:'暂无';font-size:12px;color:var(--mut)}
+.list{margin-bottom:8px}
+.it{display:flex;align-items:center;gap:8px;background:var(--bg);border-radius:6px;
+padding:7px 9px;margin:5px 0}
+.it .tx{flex:1;min-width:0;overflow-wrap:anywhere}
+.it .x{flex:none;width:28px;height:28px;padding:0;font-size:18px;line-height:1;
+color:var(--err);background:none;border:0;border-radius:5px;cursor:pointer}
+.it .x:hover{background:var(--err);color:#fff}
+
+.collapsible{overflow:hidden;transition:max-height .2s ease-out}
+.collapsed .collapsible{max-height:0!important;opacity:0;pointer-events:none}
+
+.add{display:grid;gap:7px;margin-top:7px;grid-template-columns:1fr auto;align-items:center}
+.add.two{grid-template-columns:1fr auto}
+.add.two .dt{grid-column:1}
+.add.two .bt{grid-column:2}
+.add.two .tx{grid-column:1/-1}
+
+.sw{display:flex;align-items:center;gap:7px;margin:5px 0;color:var(--fg);font-size:13px}
+.sw input{width:17px;height:17px;flex:none;accent-color:var(--acc)}
+
+.calgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(100%,1fr));gap:10px}
+.calgrid .card{margin:0}
+
+#calbody.off{opacity:.45;pointer-events:none}
+
+#toast{position:fixed;left:50%;bottom:20px;transform:translate(-50%,80px);
+max-width:88vw;padding:9px 14px;border-radius:8px;background:#000e;color:#fff;
+font-size:13px;opacity:0;transition:.2s;pointer-events:none;z-index:99}
+#toast.show{opacity:1;transform:translate(-50%,0)}
+#toast.ok{background:var(--ok)}#toast.bad{background:var(--err)}</style>
+</head><body>
+
+<header><h1>RLCD 控制台</h1><span id=hdrdot class=dot></span><span id=hdrnet>连接中…</span></header>
+
+<nav class=tabs>
+<button class='tab active' data-t=0>状态</button>
+<button class=tab data-t=1>网络</button>
+<button class=tab data-t=2>天气</button>
+<button class=tab data-t=3>日历</button>
+<button class=tab data-t=4>数据</button>
+<button class=tab data-t=5>系统</button>
+</nav>
+
+<section class='page active' id=p0><div class=grid id=stat></div>
+<p class=hint>每 5 秒自动刷新</p></section>
+
+<section class=page id=p1>
+<div class=card><div class=cardhd><b>附近的 WiFi</b>
+<button class='btn sm' id=btnscan>扫描</button></div>
+<div id=scan class=scan></div></div>
+<div class=card>
+<label for=f_ssid>WiFi 名称</label>
+<div class=inwrap><input id=f_ssid maxlength=32 autocomplete=off type=text></div>
+<label for=f_pass>WiFi 密码</label>
+<div class=inwrap>
+<input id=f_pass type=password maxlength=64 autocomplete=new-password placeholder='••••••••'>
+<button type=button class='pwbtn hide' id=p_toggle>•</button>
+</div>
+<p class=hint>ESP32-S3 只支持 2.4GHz 频段。</p>
+<button class='btn primary' id=btnnet>保存并重启</button>
+</div></section>
+
+<section class=page id=p2>
+<div class=card><div class=cardhd><b>当前读数</b>
+<button class='btn sm' id=btnwx>立即刷新</button></div>
+<div class=grid id=wxnow></div></div>
+<div class=card>
+<label for=f_city>城市</label>
+<div class=inwrap><input id=f_city maxlength=31 placeholder='北京 或城市 ID' type=text></div>
+<label for=f_host>API Host</label>
+<div class=inwrap>
+<input id=f_host type=password maxlength=63 placeholder='••••••••'>
+<button type=button class='pwbtn hide' id=h_toggle>•</button>
+</div>
+<label for=f_key>API Key</label>
+<div class=inwrap>
+<input id=f_key type=password maxlength=63 placeholder='••••••••'>
+<button type=button class='pwbtn hide' id=k_toggle>•</button>
+</div>
+<button class='btn primary' id=btnwxsave>保存设置</button>
+<p class=hint>天气配置立即生效，不需要重启。</p>
+</div></section>
+
+<section class=page id=p3>
+<div class=card id=nosd hidden><b class=err>未检测到 SD 卡</b>
+<p class=hint>日历数据保存在 SD 卡上。请插入 SD 卡后刷新。</p></div>
+<div id=calbody>
+<div class=calgrid>
+<div class=card collapsed>
+<div class=cardhd><b>标记日期</b><span class=cnt id=c_marks></span>
+<button type=button class=collapse id=marks_btn onclick="toggleCard('marks')">展开 ›</button></div>
+<div class=collapsible style="max-height:1000px">
+<div id=marks class=list></div>
+<div class=add><div class=inwrap><input type=date id=i_mark></div>
+<button class='btn sm' id=btnmark>添加</button></div>
+</div></div>
+<div class=card collapsed>
+<div class=cardhd><b>预定内容</b><span class=cnt id=c_events></span>
+<button type=button class=collapse id=events_btn onclick="toggleCard('events')">展开 ›</button></div>
+<div class=collapsible style="max-height:1000px">
+<div id=events class=list></div>
+<div class='add two'>
+<div class=inwrap><input type=text id=i_etext class=tx placeholder=内容文字></div>
+<div class=inwrap><input type=date id=i_edate class=dt></div>
+<button class='btn sm bt' id=btnevt>添加</button>
+</div></div></div>
+<div class=card collapsed>
+<div class=cardhd><b>随机标签</b><span class=cnt id=c_labels></span>
+<button type=button class=collapse id=labels_btn onclick="toggleCard('labels')">展开 ›</button></div>
+<div class=collapsible style="max-height:1000px">
+<label class=sw><input type=checkbox id=lab_on><span>启用</span></label>
+<div id=labbox hidden><div id=labels class=list></div>
+<div class=add><div class=inwrap><input type=text id=i_label placeholder=标签文字></div>
+<button class='btn sm' id=btnlab>添加</button></div></div></div></div>
+</div>
+<button class='btn primary' id=btncal>保存日历</button>
+<p class=hint>写入 SD 卡并立即生效，不重启。</p>
+</div></section>
+
+<section class=page id=p4>
+<div class=card><div class=cardhd><b>环境温湿度趋势</b>
+<select id=range_sel class=auto>
+<option value=6>1 小时</option>
+<option value=18>3 小时</option>
+<option value=36>6 小时</option>
+<option value=72>12 小时</option>
+<option value=144>24 小时</option>
+</select></div>
+<div class=chartwrap style="height:260px"><canvas id=cv></canvas></div>
+</div>
+<div class=card><b>数据下载</b>
+<p class=hint>CSV 格式：时间,室内温,室内湿,室外温,室外湿,天气,城市,RSSI</p>
+<button class='btn primary' id=btndl>下载全部数据</button>
+</div></section>
+
+<section class=page id=p5>
+<div class=card><div class=grid id=sysinfo></div></div>
+<div class=card><b>维护操作</b>
+<button class=btn id=btnreboot>重启设备</button>
+<p class=hint>约 10 秒后重新上线。</p>
+<button class='btn danger' id=btnforget>清除 WiFi 配置</button>
+<p class=warn>清除后设备重启并回到配网模式。</p>
+</div></section>
+
+<div id=toast></div>
+
+<script>
+/* ===== 桌面预览 Mock（仅本文件，不进固件）=====
+   自动生成，改 mock 请改 tools/gen_portal.py */
+(function(){
+  var STATUS={ok:true,wifi:true,rssi:-48,ip:"192.168.1.87",ssid:"MyHome_2.4G",
+    temp:24.6,humi:58,batt:92,charging:true,city:"北京市",wtext:"多云转晴",wupd:"16:42",
+    otemp:31.2,ohumi:44,feels:33.5,tmin:25,tmax:32,wind:"东北 12 km/h",
+    sd:true,sd_used:124,sd_total:15200,uptime:39472,heap:148,
+    chip:"ESP32-S3",app:"RLCD-Home 0.1",idf:"v6.0.1",mac:"84:F7:03:6C:AA:BB",flash_free:2048};
+  var CONFIG={ok:true,ssid:"MyHome_2.4G",city:"北京市",has_pass:true,has_key:true,has_host:true};
+  var LIMITS={marks:32,events:16,labels:16,text:31};
+  var CAL={ok:true,sd:true,marks:["01-01","02-14","10-01","12-25"],
+    events:[{date:"02-14",text:"情人节"},{date:"10-01",text:"国庆节"}],
+    labels:["今天也要加油","保持好心情","新的一天新的开始"]};
+  var SCAN={ok:true,aps:[{ssid:"MyHome_2.4G",rssi:-48,auth:true},
+    {ssid:"Neighbor_WiFi",rssi:-72,auth:true},{ssid:"Guest_Free",rssi:-85,auth:false}]};
+  function csv(){
+    var h="timestamp,indoor_temp,indoor_humi,outdoor_temp,outdoor_humi,weather,city,wifi_rssi\n";
+    var rows=[],now=Date.now();
+    for(var i=500;i>=0;i--){
+      var t=new Date(now-i*12*60*1000),p=function(n){return String(n).padStart(2,"0")};
+      var ts=t.getFullYear()+"-"+p(t.getMonth()+1)+"-"+p(t.getDate())+" "+p(t.getHours())+":"+p(t.getMinutes());
+      rows.push(ts+","+(23.5+Math.sin(i/11)*6).toFixed(1)+","+(52+Math.cos(i/17)*14).toFixed(0)
+                +",30,60,多云,北京市,-48");
+    }
+    return h+rows.join("\n");
+  }
+  function J(o){return Promise.resolve({ok:true,status:200,
+    text:function(){return Promise.resolve(JSON.stringify(o))},
+    json:function(){return Promise.resolve(o)}})}
+  var real=window.fetch;
+  window.fetch=function(u,o){
+    var post=o&&o.method==='POST';
+    if(u==='/api/status')   return J(STATUS);
+    if(u==='/api/limits')   return J(LIMITS);
+    if(u==='/api/scan')     return J(SCAN);
+    if(u==='/api/config')   return post?J({ok:true}):J(CONFIG);
+    if(u==='/api/calendar') return post?J({ok:true}):J(CAL);
+    if(u==='/api/data/csv') return Promise.resolve({ok:true,status:200,
+      text:function(){return Promise.resolve(csv())},
+      blob:function(){return Promise.resolve(new Blob([csv()],{type:'text/csv'}))}});
+    if(String(u).indexOf('/api/')===0) return J({ok:true});
+    return real.apply(window,arguments);   /* Chart.js 等真实资源照常走网络 */
+  };
+})();
+</script>
+<script>var CHART_URL="https://cdn.jsdelivr.net/npm/chart.js@4.4.8/dist/chart.umd.min.js";</script>
+<script>var LIM={marks:32,events:16,labels:16,text:31},dirty=false,curSsid='';
+var marks=[],events=[],labels=[],rawRows=null,chart=null;
+function $(i){return document.getElementById(i)}
+function on(i,f){var e=$(i);if(e)e.onclick=f}
+var tt;function toast(m,k){var t=$('toast');t.textContent=m;
+t.className='show'+(k?' '+k:'');clearTimeout(tt);
+tt=setTimeout(function(){t.className=''},k==='bad'?4200:2200)}
+function api(u,o){return fetch(u,o).then(function(r){
+return r.text().then(function(t){var j={};try{j=JSON.parse(t)}catch(e){}
+if(!r.ok||j.ok===false)throw new Error(j.err||('HTTP '+r.status));return j})})}
+function post(u,o){return api(u,{method:'POST',
+headers:{'Content-Type':'application/json'},body:JSON.stringify(o||{})})}
+function busy(id,b){var e=$(id);if(e)e.disabled=b}
+function pwbtn(btnId,inputId){
+  on(btnId,function(){
+    var inp=$(inputId),btn=$(btnId);
+    if(inp.type==='password'){inp.type='text';btn.textContent='👁';btn.className='pwbtn show'}
+    else{inp.type='password';btn.textContent='•';btn.className='pwbtn hide'}
+  })
+}
+function toggleCard(id){
+  var btn=$(id+'_btn');
+  var card=btn.closest('.card');
+  var collapsed=card.classList.toggle('collapsed');
+  btn.textContent=collapsed?'展开 ›':'收起';
+  localStorage.setItem('cal_'+id,collapsed?'1':'0');
+}
+function esc(s){return (''+s).replace(/&/g,'&amp;').replace(/</g,'&lt;')
+.replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;')}
+function dur(s){if(s==null)return '—';var d=Math.floor(s/86400),h=Math.floor(s%86400/3600),
+m=Math.floor(s%3600/60);return d?d+'天 '+h+'小时':(h?h+'小时 '+m+'分':m+'分')}
+function bars(r){return r>-55?'▂▄▆█':r>-68?'▂▄▆':r>-78?'▂▄':'•'}
+function badText(t){if(!t)return '内容不能为空';
+if(/[;=,\r\n]/.test(t))return '不能包含 ; = , 或换行';
+if(new Blob([t]).size>LIM.text)return '太长了（最多约 10 个汉字）';return ''}
+function mmdd(v){return v?v.slice(5):''}
+function tick(){api('/api/status').then(function(s){
+  $('hdrdot').className='dot '+(s.wifi?'on':'off');
+  $('hdrnet').textContent=s.wifi?(s.ssid||'已连接')+' · '+s.ip:'未连接 WiFi';
+  curSsid=s.ssid||'';
+  var S=[];
+  S.push({k:'WiFi',v:s.wifi?'已连接':'未连接'});S.push({k:'信号',v:s.rssi+' dBm'});
+  S.push({k:'IP 地址',v:s.ip||'—'});S.push({k:'室内温度',v:s.temp!=null?s.temp.toFixed(1)+' ℃':'—'});
+  S.push({k:'室内湿度',v:s.humi!=null?s.humi.toFixed(0)+' %':'—'});
+  S.push({k:'电池',v:s.batt!=null?s.batt+'%'+(s.charging?' ⚡':''):'—'});
+  S.push({k:'室外',v:(s.otemp!=null?s.otemp.toFixed(1)+' ℃':'—')+(s.wtext?' '+s.wtext:'')});
+  S.push({k:'天气更新',v:s.wupd||'尚未获取'});S.push({k:'SD 卡',v:s.sd?(s.sd_used+' / '+s.sd_total+' MB'):'未插入'});
+  S.push({k:'运行时长',v:dur(s.uptime)});
+  $('stat').innerHTML=S.map(function(x){return '<div class=kv><div class=k>'+esc(x.k)+'</div><div class=v>'+esc(x.v)+'</div></div>'}).join('');
+  var W=[];W.push({k:'城市',v:s.city||'—'});W.push({k:'天气',v:s.wtext||'—'});
+  W.push({k:'室外温度',v:s.otemp!=null?s.otemp.toFixed(1)+' ℃':'—'});
+  W.push({k:'体感温度',v:s.feels!=null?s.feels.toFixed(1)+' ℃':'—'});
+  W.push({k:'室外湿度',v:s.ohumi!=null?s.ohumi.toFixed(0)+' %':'—'});W.push({k:'风速',v:s.wind||'—'});
+  W.push({k:'今日范围',v:s.tmin!=null?s.tmin+' ~ '+s.tmax+' ℃':'—'});W.push({k:'最后更新',v:s.wupd||'—'});
+  $('wxnow').innerHTML=W.map(function(x){return '<div class=kv><div class=k>'+esc(x.k)+'</div><div class=v>'+esc(x.v)+'</div></div>'}).join('');
+  var Y=[];Y.push({k:'型号',v:s.chip||'—'});Y.push({k:'固件',v:s.app||'—'});Y.push({k:'ESP-IDF',v:s.idf||'—'});
+  Y.push({k:'MAC',v:s.mac||'—'});Y.push({k:'空闲内存',v:s.heap!=null?s.heap+' KB':'—'});
+  Y.push({k:'Flash 剩余',v:s.flash_free!=null?s.flash_free+' KB':'—'});Y.push({k:'运行时长',v:dur(s.uptime)});
+  Y.push({k:'SD 卡',v:s.sd?'已挂载':'未插入'});
+  $('sysinfo').innerHTML=Y.map(function(x){return '<div class=kv><div class=k>'+esc(x.k)+'</div><div class=v>'+esc(x.v)+'</div></div>'}).join('');
+  if(!s.sd){$('nosd').hidden=false;$('calbody').classList.add('off');}
+  else{$('nosd').hidden=true;$('calbody').classList.remove('off');}
+}).catch(function(){})}
+
+function cnt(id,n,max){$(id).textContent=n+' / '+max}
+function render(){
+  function box(id,arr,f){$(id).innerHTML=arr.map(function(v,i){
+    return '<div class=it><span class=tx>'+esc(f(v))+'</span>'
+      +'<button type=button class=x data-l='+id+' data-i='+i+'>×</button></div>'}).join('');
+    $(id).querySelectorAll('.x').forEach(function(e){e.onclick=function(){
+      ({marks:marks,events:events,labels:labels})[e.dataset.l].splice(+e.dataset.i,1);
+      dirty=true;render()}})}
+  box('marks',marks,function(v){return v});box('events',events,function(v){return v.date+' → '+v.text});
+  box('labels',labels,function(v){return v});cnt('c_marks',marks.length,LIM.marks);
+  cnt('c_events',events.length,LIM.events);cnt('c_labels',labels.length,LIM.labels);
+  busy('btnmark',marks.length>=LIM.marks);busy('btnevt',events.length>=LIM.events);
+  busy('btnlab',labels.length>=LIM.labels)}
+
+// 只留 5 个时间选项对应的点数
+var MAX_DISPLAY=500;
+function parseCsvStream(text){
+  var lines=text.split(/\r?\n/);lines.shift();
+  // 倒着读，取最新 N 行，时间最旧的在前
+  var rows=[],step=Math.max(1,Math.ceil(lines.length/MAX_DISPLAY));
+  for(var i=Math.max(0,lines.length-MAX_DISPLAY*step);i<lines.length;i+=step){
+    if(!lines[i])continue;
+    var cols=[],s='',q=false,line=lines[i];
+    for(var j=0;j<line.length;j++){
+      if(line[j]=='"')q=!q;
+      else if(line[j]==','&&!q){cols.push(s);s=''}
+      else s+=line[j];
+    }cols.push(s);if(cols.length>=3)rows.push({
+      t:cols[0],it:parseFloat(cols[1]),ih:parseFloat(cols[2])
+    });
+  }rawRows=rows;toast('最新 '+rows.length+' 点数据','ok');drawChart();
+}
+
+function drawChart(){
+  if(!rawRows||!rawRows.length||!window.Chart)return;
+  var ctx=$('cv').getContext('2d');if(chart)chart.destroy();
+  var n=parseInt($('range_sel').value,10);
+  var d=rawRows.slice(-Math.min(rawRows.length,n));
+  var isDark=window.matchMedia('(prefers-color-scheme: dark)').matches;
+  chart=new Chart(ctx,{
+    type:'line',data:{
+      labels:d.map(function(x){return x.t.slice(5,16).replace(' ','\n')}),
+      datasets:[{
+        label:'室内温度 (℃)',data:d.map(function(x){return x.it}),
+        borderColor:'#2563eb',backgroundColor:'rgba(37,99,235,.1)',
+        tension:.25,borderWidth:2,pointRadius:0,pointHoverRadius:4,fill:true,yAxisID:'y'
+      },{
+        label:'室内湿度 (%)',data:d.map(function(x){return x.ih}),
+        borderColor:'#059669',backgroundColor:'rgba(5,150,105,.1)',
+        tension:.25,borderWidth:2,pointRadius:0,pointHoverRadius:4,fill:true,yAxisID:'y1'
+      }]
+    },options:{
+      responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
+      plugins:{
+        legend:{position:'bottom',labels:{font:{size:12},usePointStyle:true,
+          color:isDark?'#e8eaed':'#16181d',boxWidth:12}},
+        tooltip:{mode:'index',intersect:false,backgroundColor:isDark?'rgba(0,0,0,.85)':'rgba(0,0,0,.8)',
+          padding:8,cornerRadius:6,titleFont:{size:12},bodyFont:{size:12}}
+      },
+      scales:{
+        x:{grid:{display:false},ticks:{font:{size:10},color:isDark?'#9499a3':'#9499a3',
+          maxTicksLimit:7,maxRotation:0}},
+        y:{position:'left',grid:{color:isDark?'rgba(255,255,255,.06)':'rgba(0,0,0,.05)'},
+          ticks:{font:{size:11},color:'#2563eb'},title:{display:true,text:'温度 ℃',
+          color:'#2563eb',font:{size:11}}},
+        y1:{position:'right',grid:{display:false},
+          ticks:{font:{size:11},color:'#059669'},title:{display:true,text:'湿度 %',
+          color:'#059669',font:{size:11}}}
+      }
+    }
+  });
+}
+// Chart.js（gzip 后约 70KB）按需加载：只有真正打开"数据"页才去下。
+// 首屏因此不必等这 70KB —— 对 ESP32-S3 的 5760B TCP 窗口差别很明显。
+var chartLib=null;
+function ensureChart(){
+  if(chartLib)return chartLib;
+  chartLib=new Promise(function(res,rej){
+    var s=document.createElement('script');
+    s.src=CHART_URL;
+    s.onload=function(){res(window.Chart)};
+    s.onerror=function(){chartLib=null;rej(new Error('图表库加载失败'))};
+    document.head.appendChild(s);
+  });
+  return chartLib;
+}
+function loadData(){
+  return ensureChart().then(function(){
+    if(rawRows)return drawChart();
+    return fetch('/api/data/csv')
+      .then(function(r){if(!r.ok)throw new Error('数据获取失败');return r.text()})
+      .then(function(t){parseCsvStream(t)});
+  }).catch(function(e){toast(e.message,'bad')});
+}
+
+document.addEventListener('DOMContentLoaded', function(){
+  pwbtn('p_toggle','f_pass');pwbtn('h_toggle','f_host');pwbtn('k_toggle','f_key');
+  ['marks','events','labels'].forEach(function(id){
+    var collapsed=localStorage.getItem('cal_'+id)!=='0';
+    var btn=$(id+'_btn'),card=btn.closest('.card');
+    if(collapsed){card.classList.add('collapsed');btn.textContent='展开 ›'}
+    else btn.textContent='收起';
+  });
+  document.querySelectorAll('.tab').forEach(function(b){b.onclick=function(){
+    var n=b.dataset.t;document.querySelectorAll('.tab').forEach(function(x,i){
+      x.classList.toggle('active',''+i==n)});
+    document.querySelectorAll('.page').forEach(function(x,i){
+      x.classList.toggle('active',''+i==n)});if(n==4)setTimeout(loadData,100);
+  }});
+  on('btnscan',function(){var b=$('scan');b.innerHTML='<div class=msg>扫描中…</div>';
+  busy('btnscan',true);api('/api/scan').then(function(j){var l=j.aps||[];
+    if(!l.length){b.innerHTML='<div class=msg>未发现 2.4GHz 网络</div>';return}
+    b.innerHTML=l.map(function(a){return '<button type=button class=ap data-s='+
+      esc(a.ssid).replace(/'/g,'&#39;')+'>'+
+      '<span class=nm>'+(a.auth?'🔒 ':'')+esc(a.ssid)+'</span>'+
+      (a.ssid==curSsid?'<span class=cur>当前</span>':'')+
+      '<span class=rs>'+bars(a.rssi)+' '+a.rssi+'</span></button>'}).join('');
+    b.querySelectorAll('.ap').forEach(function(e){e.onclick=function(){
+      $('f_ssid').value=e.dataset.s;toast('已选择 '+e.dataset.s)}})
+  }).catch(function(e){b.innerHTML='<div class=msg err>扫描失败：'+esc(e.message)+'</div>'})
+  .then(function(){busy('btnscan',false)})});
+  on('btnnet',function(){var s=$('f_ssid').value.trim();if(!s){toast('请填写 WiFi 名称','bad');return}
+    if(!confirm('保存后设备会立即重启并尝试连接 '+s+'。继续？'))return;busy('btnnet',true);
+    post('/api/config',{ssid:s,pass:$('f_pass').value}).then(function(){
+      document.body.innerHTML='<div class=msg style=padding:60px>已保存，设备正在重启…</div>'
+    }).catch(function(e){toast(e.message,'bad');busy('btnnet',false)})});
+  on('btnwxsave',function(){busy('btnwxsave',true);
+    post('/api/config',{city:$('f_city').value.trim(),host:$('f_host').value,
+apikey:$('f_key').value}).then(function(){
+      $('f_key').value='';$('f_host').value='';toast('已保存，正在刷新天气','ok');
+      return post('/api/weather_refresh')}).catch(function(e){toast(e.message,'bad')})
+    .then(function(){busy('btnwxsave',false);setTimeout(tick,3000)})});
+  on('btnwx',function(){busy('btnwx',true);post('/api/weather_refresh')
+    .then(function(){toast('已触发刷新','ok');setTimeout(tick,3000)})
+    .catch(function(e){toast(e.message,'bad')}).then(function(){busy('btnwx',false)})});
+  on('btnmark',function(){var v=mmdd($('i_mark').value);if(!v){toast('请先选择日期','bad');return}
+    if(marks.indexOf(v)>=0){toast('该日期已在列表中','bad');return}
+    marks.push(v);marks.sort();$('i_mark').value='';dirty=true;render()});
+  on('btnevt',function(){var d=mmdd($('i_edate').value),t=$('i_etext').value.trim();
+    if(!d){toast('请先选择日期','bad');return}var e=badText(t);if(e){toast(e,'bad');return}
+    for(var i=0;i<events.length;i++)if(events[i].date==d){events[i].text=t;
+      $('i_edate').value='';$('i_etext').value='';dirty=true;render();
+      toast('已更新 '+d+' 的预定');return}
+    events.push({date:d,text:t});events.sort(function(a,b){return a.date<b.date?-1:1});
+    $('i_edate').value='';$('i_etext').value='';dirty=true;render()});
+  on('btnlab',function(){var t=$('i_label').value.trim();var e=badText(t);if(e){toast(e,'bad');return}
+    if(labels.indexOf(t)>=0){toast('该标签已存在','bad');return}
+    labels.push(t);$('i_label').value='';dirty=true;render()});
+  $('lab_on').onchange=function(){$('labbox').hidden=!this.checked;dirty=true};
+  on('btncal',function(){busy('btncal',true);
+    post('/api/calendar',{marks:marks,events:events,labels:$('lab_on').checked?labels:[]})
+    .then(function(){dirty=false;toast('已写入 SD 卡','ok')})
+    .catch(function(e){toast(e.message,'bad')}).then(function(){busy('btncal',false)})});
+  $('range_sel').onchange=drawChart;
+  on('btndl',function(){busy('btndl',true);fetch('/api/data/csv')
+    .then(function(r){if(!r.ok)throw new Error('下载失败');return r.blob()})
+    .then(function(b){var a=document.createElement('a');a.href=URL.createObjectURL(b);
+      a.download='rlcd_weather_'+(new Date().toISOString().slice(0,10))+'.csv';
+      a.click();toast('下载完成','ok')})
+    .catch(function(e){toast(e.message,'bad')}).then(function(){busy('btndl',false)})});
+  on('btnreboot',function(){if(!confirm('确定要重启设备？'))return;
+    post('/api/reboot').catch(function(){});toast('正在重启…')});
+  on('btnforget',function(){if(!confirm('将清除已保存的 WiFi 配置并重启，确定？'))return;
+    post('/api/forget').catch(function(){});toast('已清除，正在重启…')});
+  api('/api/limits').then(function(l){LIM=l;render()}).catch(function(){render()});
+  api('/api/calendar').then(function(c){marks=c.marks||[];events=c.events||[];labels=c.labels||[];
+    $('lab_on').checked=labels.length>0;$('labbox').hidden=!labels.length;render()}).catch(function(){render()});
+  api('/api/config').then(function(c){
+    $('f_ssid').value=c.ssid||'';$('f_city').value=c.city||'';
+    $('f_pass').placeholder=c.has_pass?'••••••••':'尚未设置';
+    $('f_key').placeholder=c.has_key?'••••••••':'尚未设置';
+    $('f_host').placeholder=c.has_host?'••••••••':'xxx.re.qweatherapi.com';
+  }).catch(function(){});
+  tick();setInterval(tick,5000);
+  setTimeout(function(){var obs=new IntersectionObserver(function(es){es.forEach(function(e){
+    if(e.isIntersecting&&!rawRows){obs.disconnect();loadData();}
+  })});obs.observe($('cv'));},200);
+  window.onbeforeunload=function(){if(dirty)return '日历有未保存的修改'};
+});</script>
+</body></html>
