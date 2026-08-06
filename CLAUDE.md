@@ -62,7 +62,7 @@ cd simulator && cmake -B build && cmake --build build -j
 - **port_bsp** — DisplayPort C++ 类（SPI3 驱动 RLCD）、I2C 主机 + SHTC3 驱动、按键 BSP（multi_button + 5ms tick）、电池 ADC（`adc_bsp` — ADC1_CH3/GPIO4 + 曲线校准 ×3 分压）、SD 卡 BSP（SDMMC 1-line + 5s 热插拔探活）。引脚见 `main/user_config.h`。
 - **app_bsp** — LVGL v9 端口：tick 定时器、任务 handler、互斥（Lvgl_lock/unlock）。
 - **ui** — 共享 UI。`ui_home_create()` 建树；其他任务写 `ui_model_get()` 后调 `ui_home_request_refresh()` 或 `ui_home_apply_locked()`。
-- **net_bsp** — WiFi STA/SoftAP、HTTP 配网门户、NVS 持久化、天气拉取（**QWeather** 单一 provider）。按职责拆为多文件：`net_bsp.c`（入口 + 共享状态 + NVS + 看门狗）/ `net_wifi.c`（WiFi 事件 + SNTP）/ `net_portal.c`（管理门户：静态资源 + JSON API）/ `net_weather.c`（QWeather API + gzip）/ `net_calendar.c`（日历存 SD，原子写）/ `net_internal.h`（组件内共享声明）。对外 API 仍只在 `net_bsp.h`。门户前端**权威源码在 `components/net_bsp/portal/`**（index.html / style.css / app.js），改完必须跑 `python3 tools/gen_portal.py` 重新生成 `src/portal_assets.h`（gzip 字节数组，勿手改）+ `simulator/portal_preview.html`（带 mock，浏览器直接打开可预览）。
+- **net_bsp** — WiFi STA/SoftAP、HTTP 配网门户、NVS 持久化、天气拉取（**QWeather** 单一 provider）。按职责拆为多文件：`net_bsp.c`（入口 + 共享状态 + NVS + 看门狗）/ `net_wifi.c`（WiFi 事件 + SNTP）/ `net_portal.c`（管理门户：静态资源 + JSON API）/ `net_http.c`（**共享** HTTPS GET + gzip 解压 + 轻量 JSON 取值，QWeather 与 UAPI 共用）/ `net_weather.c`（QWeather API）/ `net_uapi.c`（**UAPI uapis.cn** `/network/myip`：公网 IP + 自动城市）/ `net_calendar.c`（日历存 SD，原子写）/ `net_internal.h`（组件内共享声明）。对外 API 仍只在 `net_bsp.h`。门户前端**权威源码在 `components/net_bsp/portal/`**（index.html / style.css / app.js），改完必须跑 `python3 tools/gen_portal.py` 重新生成 `src/portal_assets.h`（gzip 字节数组，勿手改）+ `simulator/portal_preview.html`（带 mock，浏览器直接打开可预览）。
 - **user_app** — 传感器 / 电池 ADC 初始化 + 1Hz tick 任务把读数写入 ui_model（温湿度每秒；电量、充电趋势、SD 探活、无网看门狗共用 5s 慢节拍）；独立 CSV 日志任务（fsync 落盘）。RTC 待硬件到货再接。
 
 ## 后台任务与节拍
@@ -73,12 +73,30 @@ cd simulator && cmake -B build && cmake --build build -j
 | ------------------------ | --------------------- | ---------------------------------------------------------------------------------------- |
 | user_tick                | 1s；**5s 慢节拍**     | 每秒读时间 + SHTC3；5s 慢节拍做 SD 热插拔探活 + 电池采样 +`NetBsp_OfflineWatchdogTick()` |
 | csv_log                  | 10min                 | 追加一行 CSV 到 SD（首帧延迟 15s，fsync 落盘）                                           |
-| weather                  | 成功 10min / 失败 30s | 拉 QWeather；事件位可提前唤醒                                                            |
+| weather                  | 成功 10min / 失败 30s | 拉 QWeather；**顺带每日一次 UAPI 定位**（自动城市 + 公网 IP）；事件位可提前唤醒 |
 | LVGL                     | 自适应 1~500ms        | `lv_timer_handler()` 渲染                                                                |
 | button tick（esp_timer） | 5ms                   | multi_button 按键去抖                                                                    |
 | lvgl tick（esp_timer）   | 5ms                   | 给 LVGL 喂 tick                                                                          |
 
 > 无网看门狗不自带任务：做成一次性 `NetBsp_OfflineWatchdogTick()`，由 user_tick 的 5s 慢节拍调用（状态未就绪时函数自身 early-return，早启无害）。
+
+## 自动城市 & 公网 IP（UAPI uapis.cn）
+
+管理页城市**留空 = 自动定位**：调 `https://uapis.cn/api/v1/network/myip?source=commercial`，
+用返回的 `district`（行政区，如"青秀区"）当查询词喂 QWeather 城市解析；`district` 缺失时退到
+`region`（"国家 省份 城市"）末段。
+
+- **优先级**：用户手填城市**永远优先**。`s_cfg.city` 非空时完全不调 UAPI，也不消耗配额。
+  自动结果只存运行期缓存（`s_uapi_info` / weather_task 局部 `auto_city`），**绝不写回
+  `s_cfg.city`** —— 否则自动值会伪装成"用户手填过"。
+- **频率**：一天一次，与 daily 天气共用「跨天」判据，挂在 weather_task 里（无独立任务）。
+  失败不记当天、下轮重试，但每天最多试 5 次（`UAPI_MAX_TRIES_PER_DAY`），避免限流时空转。
+  定位**不受**天气凭据缺失影响 —— 没配 QWeather 也能看到自己的公网 IP。
+- **鉴权**：`Authorization: Bearer <uapi-…>`，key 存 NVS（`uapi_key`，门户天气页可填），
+  **不硬编码、不进 URL**。留空则按访客配额调用（文档：1500 credits/月/IP、4 QPS）。
+- **门户**：天气页「刷新城市」按钮（城市非空时后端回 409）；网络页「公网 IP」卡片
+  用同一套 `.grid/.kv` 布局展示 ip/region/district/isp。接口 `POST /api/city_refresh`、
+  `GET /api/pubip`。
 
 ## 状态栏显示规则
 

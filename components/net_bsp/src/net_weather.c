@@ -2,13 +2,12 @@
 //
 // 设计原则：
 //   1. 所有缓冲局部分配，函数返回前 free —— 无 static state，无跨调用累积。
-//   2. gzip 用 espressif/zlib（inflateInit2 + inflate + inflateEnd），
-//      每次调用完整生命周期；zlib 是 mbedtls/lwip 兄弟组件，久经考验。
-//   3. HTTP 用 esp_http_client_open / _fetch_headers / _read 流式读，
-//      不用 event handler —— 数据直接读到本地缓冲。
-//   4. 任一步失败立即返回，上层 weather_task 决定重试节奏。
-//   5. Now/Daily 两个端点串行拉，Now 是主数据（决定是否显示），
+//   2. HTTP GET / gzip 解压 / JSON 取值抽到 net_http.c 与 net_uapi.c 共用。
+//   3. 任一步失败立即返回，上层 weather_task 决定重试节奏。
+//   4. Now/Daily 两个端点串行拉，Now 是主数据（决定是否显示），
 //      Daily 失败只警告不阻塞。
+//   5. 城市来源两条路：用户在门户手填（优先），或留空时由 UAPI 自动定位
+//      （net_uapi.c，一天一次，与 Daily 共用同一个"跨天"节拍）。
 
 #include "net_internal.h"
 #include "ui_model.h"
@@ -21,261 +20,28 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <freertos/event_groups.h>
-#include <esp_http_client.h>
-#include <esp_crt_bundle.h>
 #include <esp_log.h>
 
-// gzip 解压 —— QWeather 强制返回 gzip；esp_http_client 不自动解压。
-#include "zlib.h"
-
 #define WX_HTTP_TIMEOUT_MS   15000
-#define WX_HTTP_MAX_BYTES    16384       // 单次响应上限（未压缩）
-#define WX_GZIP_MAX_BYTES    32768       // 解压输出上限
 #define WX_URL_MAX           320
 
-// 一次 GET 拉到的 body：可能是压缩数据或明文，看 content-encoding。
-typedef struct {
-    char *data;       // malloc 的，caller free
-    size_t len;
-    bool   gzipped;
-} wx_response_t;
-
-static void wx_response_free(wx_response_t *r)
-{
-    if (r && r->data) { free(r->data); r->data = NULL; r->len = 0; }
-}
-
-// URL 百分比编码（保留 unreserved: A-Z a-z 0-9 - . _ ~）
-static void wx_url_encode(char *out, size_t out_n, const char *in)
-{
-    static const char hex[] = "0123456789ABCDEF";
-    size_t n = 0;
-    for (const unsigned char *s = (const unsigned char *)in; *s && n + 4 < out_n; s++) {
-        if ((*s >= 'A' && *s <= 'Z') || (*s >= 'a' && *s <= 'z') ||
-            (*s >= '0' && *s <= '9') || *s == '-' || *s == '.' || *s == '_' || *s == '~') {
-            out[n++] = (char)*s;
-        } else {
-            out[n++] = '%';
-            out[n++] = hex[*s >> 4];
-            out[n++] = hex[*s & 0xF];
-        }
-    }
-    out[n] = 0;
-}
-
-// 简易 JSON 字段抽取（找第一个 "key":value）：
-//   - "key":"str" → str 写入 out（超长按 UTF-8 字符边界截断）
-//   - "key":num   → num 字符串写入 out
-// 用于扁平 QWeather 响应，不支持嵌套 key。返回 true 表示写了非空。
-//
-// 截断必须按字符边界退：QWeather 的中文字段（windDir/text）都是 3 字节一个汉字，
-// 若直接按字节截断会留下半个汉字，LVGL 渲染成方框 —— "东北风" 曾因此显示成 "东北□"。
-static bool wx_json_str(const char *body, const char *key, char *out, size_t out_n)
-{
-    out[0] = 0;
-    char pat[48];
-    snprintf(pat, sizeof(pat), "\"%s\"", key);
-    const char *p = strstr(body, pat);
-    if (!p) return false;
-    p += strlen(pat);
-    while (*p == ' ' || *p == ':') p++;
-    if (*p == '"') {
-        p++;
-        const char *e = strchr(p, '"');
-        if (!e) return false;
-        size_t l = (size_t)(e - p);
-        if (l >= out_n) {
-            l = out_n - 1;
-            // 退到首字节（非 10xxxxxx 的续字节）为止，丢掉不完整的尾字符
-            while (l > 0 && ((unsigned char) p[l] & 0xC0) == 0x80) l--;
-        }
-        memcpy(out, p, l);
-        out[l] = 0;
-    } else {
-        size_t l = 0;
-        while (*p && *p != ',' && *p != '}' && *p != ' '
-               && *p != '\n' && *p != '\r' && l + 1 < out_n) {
-            out[l++] = *p++;
-        }
-        out[l] = 0;
-    }
-    return out[0] != 0;
-}
-
-// 把 src 拷进定长字段，超长时**按 UTF-8 字符边界**回退。
-// 中文字段一律走这里，别用裸 strncpy —— 那会留下半个汉字，屏上是个方框。
-static void wx_copy_utf8(char *dst, size_t cap, const char *src)
-{
-    size_t l = strlen(src);
-    if (l >= cap) {
-        l = cap - 1;
-        while (l > 0 && ((unsigned char) src[l] & 0xC0) == 0x80) l--;
-    }
-    memcpy(dst, src, l);
-    dst[l] = 0;
-}
-
-// 拉一次 HTTP GET。返回 malloc 的 wx_response_t（body 是原始字节流），
-// 失败返回 {NULL, 0}。请求头带 Accept-Encoding: gzip —— QWeather 无论如何
-// 都会返回 gzip，我们诚实告诉服务器。
-static wx_response_t wx_http_get(const char *url, int timeout_ms)
-{
-    wx_response_t out = { NULL, 0, false };
-
-    esp_http_client_config_t cfg = {};
-    cfg.url = url;
-    cfg.timeout_ms = timeout_ms;
-    cfg.crt_bundle_attach = esp_crt_bundle_attach;
-    cfg.buffer_size = 2048;
-    cfg.buffer_size_tx = 1024;
-    esp_http_client_handle_t c = esp_http_client_init(&cfg);
-    if (!c) return out;
-
-    esp_http_client_set_header(c, "Accept-Encoding", "gzip");
-    esp_http_client_set_header(c, "User-Agent", "rlcd/1.0");
-
-    esp_err_t err = esp_http_client_open(c, 0);
-    if (err != ESP_OK) {
-        ESP_LOGW(NET_TAG, "http open failed: %s", esp_err_to_name(err));
-        esp_http_client_cleanup(c);
-        return out;
-    }
-
-    int64_t clen = esp_http_client_fetch_headers(c);
-    int status = esp_http_client_get_status_code(c);
-    if (status != 200) {
-        ESP_LOGW(NET_TAG, "http status %d for %.60s", status, url);
-        esp_http_client_close(c);
-        esp_http_client_cleanup(c);
-        return out;
-    }
-
-    // Content-Encoding: gzip? 用 response header 版本 —— get_header() 读的是请求头！
-    char *enc = NULL;
-    esp_http_client_get_response_header(c, "Content-Encoding", &enc);
-    out.gzipped = (enc && strcasecmp(enc, "gzip") == 0);
-    // 后置嗅探：某些代理不设 Content-Encoding，但 body 就是 gzip 帧
-    // （0x1f 0x8b 0x08 = ID1 ID2 CM）—— 兜底识别。
-    // ↑ 见循环体后处理。
-    ESP_LOGD(NET_TAG, "resp gzipped(header)=%d clen=%lld", (int)out.gzipped, (long long)clen);
-    (void)clen;
-
-    // 分配 body。已知长度：按 clen；未知（chunked）：先给 4 KiB，边读边扩。
-    size_t cap = (clen > 0 && clen < WX_HTTP_MAX_BYTES) ? (size_t)clen + 1 : 4096;
-    out.data = (char *)malloc(cap);
-    if (!out.data) {
-        ESP_LOGE(NET_TAG, "http body malloc %zu failed", cap);
-        esp_http_client_close(c);
-        esp_http_client_cleanup(c);
-        return out;
-    }
-
-    for (;;) {
-        if (out.len + 1024 > cap) {
-            if (cap >= WX_HTTP_MAX_BYTES) {
-                ESP_LOGW(NET_TAG, "http body exceeds %d bytes, truncating", WX_HTTP_MAX_BYTES);
-                break;
-            }
-            size_t new_cap = cap * 2;
-            if (new_cap > WX_HTTP_MAX_BYTES) new_cap = WX_HTTP_MAX_BYTES;
-            char *p = (char *)realloc(out.data, new_cap);
-            if (!p) { ESP_LOGE(NET_TAG, "http body realloc %zu failed", new_cap); break; }
-            out.data = p; cap = new_cap;
-        }
-        int n = esp_http_client_read(c, out.data + out.len, cap - out.len - 1);
-        if (n <= 0) break;
-        out.len += (size_t)n;
-    }
-    out.data[out.len] = 0;
-
-    // gzip 魔术数嗅探（兜底：某些代理不发 Content-Encoding，但 body 就是 gzip）
-    if (!out.gzipped && out.len >= 3 &&
-        (unsigned char)out.data[0] == 0x1f &&
-        (unsigned char)out.data[1] == 0x8b &&
-        (unsigned char)out.data[2] == 0x08) {
-        out.gzipped = true;
-        ESP_LOGD(NET_TAG, "resp gzip sniffed by magic");
-    }
-
-    esp_http_client_close(c);
-    esp_http_client_cleanup(c);
-
-    if (out.len == 0) {
-        free(out.data); out.data = NULL;
-    }
-    return out;
-}
-
-// gzip → plain。返回 malloc 的解压结果（NULL 表示失败）。
-// 用 zlib 的 inflateInit2(15+32) —— magic +32 让它自动识别 gzip / zlib wrapper。
-static char *wx_gunzip(const char *gz, size_t gz_len, size_t *out_len)
-{
-    if (!gz || gz_len == 0) return NULL;
-    *out_len = 0;
-
-    z_stream zs = { 0 };
-    zs.next_in = (Bytef *)gz;
-    zs.avail_in = (uInt)gz_len;
-    // 15 = 最大 window bits；+32 = 自动检测 gzip/zlib header
-    int rc = inflateInit2(&zs, 15 + 32);
-    if (rc != Z_OK) {
-        ESP_LOGW(NET_TAG, "inflateInit2: %d", rc);
-        return NULL;
-    }
-
-    size_t cap = gz_len * 4;
-    if (cap < 1024) cap = 1024;
-    if (cap > WX_GZIP_MAX_BYTES) cap = WX_GZIP_MAX_BYTES;
-    char *out = (char *)malloc(cap + 1);
-    if (!out) { inflateEnd(&zs); return NULL; }
-
-    for (;;) {
-        zs.next_out = (Bytef *)(out + zs.total_out);
-        zs.avail_out = (uInt)(cap - zs.total_out);
-        rc = inflate(&zs, Z_NO_FLUSH);
-        if (rc == Z_STREAM_END) break;
-        if (rc != Z_OK) {
-            ESP_LOGW(NET_TAG, "inflate: %d (total_out=%lu)", rc, (unsigned long)zs.total_out);
-            free(out); inflateEnd(&zs);
-            return NULL;
-        }
-        if (zs.avail_out == 0) {
-            // 输出满，扩容
-            if (cap >= WX_GZIP_MAX_BYTES) {
-                ESP_LOGW(NET_TAG, "gzip output exceeds %d bytes", WX_GZIP_MAX_BYTES);
-                free(out); inflateEnd(&zs);
-                return NULL;
-            }
-            size_t new_cap = cap * 2;
-            if (new_cap > WX_GZIP_MAX_BYTES) new_cap = WX_GZIP_MAX_BYTES;
-            char *p = (char *)realloc(out, new_cap + 1);
-            if (!p) { free(out); inflateEnd(&zs); return NULL; }
-            out = p; cap = new_cap;
-        }
-    }
-    *out_len = zs.total_out;
-    out[*out_len] = 0;
-    inflateEnd(&zs);
-    return out;
-}
+// HTTP GET / gzip 解压 / JSON 取值 / UTF-8 安全拷贝都在 net_http.c，
+// 与 net_uapi.c 共用（原先这些是本文件的 static 副本）。
+#define wx_json_str   net_json_str
+#define wx_copy_utf8  net_copy_utf8
 
 // 拉一次 QWeather 端点，返回 malloc 的明文 body（caller free）。
 // HTTP GET → 按需 gzip 解压 → 校验 v7 响应外壳 `code=="200"`。失败返回 NULL。
 static char *wx_fetch(const char *url)
 {
-    wx_response_t resp = wx_http_get(url, WX_HTTP_TIMEOUT_MS);
-    if (!resp.data) return NULL;
-
-    char *body = NULL;
+    net_http_req_t io = { .timeout_ms = WX_HTTP_TIMEOUT_MS };
     size_t body_len = 0;
-    if (resp.gzipped) {
-        body = wx_gunzip(resp.data, resp.len, &body_len);
-        wx_response_free(&resp);
-        if (!body) return NULL;
-    } else {
-        body = resp.data;
-        body_len = resp.len;
-        resp.data = NULL;   // 所有权转移，避免 free 两次
+    char *body = net_http_get_text(url, &io, &body_len);
+    if (!body) return NULL;
+    if (io.status != 200) {
+        ESP_LOGW(NET_TAG, "qweather HTTP %d for %.60s", io.status, url);
+        free(body);
+        return NULL;
     }
 
     char code[8] = {0};
@@ -303,7 +69,7 @@ static bool wx_geo_lookup(const char *host, const char *apikey,
     memset(out, 0, sizeof(*out));
 
     char enc[96];
-    wx_url_encode(enc, sizeof(enc), query);
+    net_url_encode(enc, sizeof(enc), query);
     char url[WX_URL_MAX];
     snprintf(url, sizeof(url), "https://%s/geo/v2/city/lookup?location=%s&key=%s",
              host, enc, apikey);
@@ -391,6 +157,48 @@ static bool wx_fetch_daily(const char *host, const char *apikey,
 // 注：CSV 日志已迁移到 user_app.c —— 用独立的 10 分钟节奏，无网也能记录
 // 本地温湿度（哪怕 weather 拉不到，"室外/天气" 字段留空即可）。
 
+// 「自动城市」一天一次：城市留空时调 UAPI /network/myip?source=commercial，
+// 用 district 当查询词。结果只存运行期缓存（s_uapi_info + 返回值），
+// **不写回 s_cfg.city** —— 手填城市永远优先，自动值不该变成"手填过"的样子。
+//
+// 与 Daily 共用同一个"跨天"判据：day 变了就该重新定位（设备可能已经挪地方了）。
+// 返回是否成功拿到自动城市；auto_city 为出参（失败时保持原值不动）。
+//
+// 失败时**不**记 last_ip_day，让下一轮（10min/30s）重试；但用 tries 计数封顶，
+// 避免限流/欠配额时一整天几百次空转 —— 每天最多试 UAPI_MAX_TRIES_PER_DAY 次。
+#define UAPI_MAX_TRIES_PER_DAY  5
+
+static bool wx_update_auto_city(int *last_ip_day, int *tries, int today,
+                                char *auto_city, size_t cap)
+{
+    uapi_myip_t info;
+    if (!NetBsp_FetchPublicIp(&info)) {
+        if (++(*tries) >= UAPI_MAX_TRIES_PER_DAY) {
+            *last_ip_day = today;   // 今天不再试，等跨天或手动刷新
+            ESP_LOGW(NET_TAG, "auto city: 今日已失败 %d 次，暂停到明天（或手动刷新）",
+                     *tries);
+        }
+        // 失败不清掉上次的自动城市 —— 宁可用旧的也别退回没有城市
+        return auto_city[0] != 0;
+    }
+
+    s_uapi_info  = info;
+    s_uapi_valid = true;
+    *last_ip_day = today;
+    *tries = 0;
+
+    if (!info.city[0]) {
+        ESP_LOGW(NET_TAG, "auto city: UAPI 未返回 district/region，无法定位城市");
+        return auto_city[0] != 0;
+    }
+    if (strcmp(auto_city, info.city) != 0) {
+        net_copy_utf8(auto_city, cap, info.city);
+        ESP_LOGI(NET_TAG, "auto city: → '%s'（公网 IP %s）", auto_city, info.ip);
+        return true;
+    }
+    return true;
+}
+
 void weather_task(void *arg)
 {
     ui_model_t *m = ui_model_get();
@@ -404,9 +212,36 @@ void weather_task(void *arg)
     // daily 数据一天不变，只在首次（数值为空）或跨天时拉取，避免浪费请求。
     // -1 表示尚未拉过，下次循环必然触发。
     int last_daily_day = -1;
+    // 自动定位同样一天一次，独立记日子：它可能失败（限流/无网）而 daily 成功。
+    int  last_ip_day = -1;
+    int  ip_tries    = 0;          // 当天已失败次数，封顶见 UAPI_MAX_TRIES_PER_DAY
+    char auto_city[32] = {0};      // UAPI 定位出的城市，仅当 s_cfg.city 为空时使用
 
     for (;;) {
         bool ok = false;
+
+        // ---- UAPI 每日定位：一天一次，天气凭据缺失时照样跑 ----
+        // 两个用途：① 城市留空时提供自动城市；② 公网 IP / 归属地供门户「网络」页展示。
+        // 放在天气凭据判断**之外** —— 没配 QWeather 也该能看到自己的公网 IP。
+        // 门户「刷新城市」按钮通过 s_uapi_city_kick 无视每日节拍强制重跑。
+        if (s_uapi_city_kick) {
+            s_uapi_city_kick = false;
+            last_ip_day = -1;
+            ip_tries    = 0;        // 手动刷新重置失败计数
+            ESP_LOGI(NET_TAG, "weather: 手动触发自动城市刷新");
+        }
+        if (last_ip_day == -1 || m->day != last_ip_day) {
+            if (m->day != last_ip_day) ip_tries = 0;   // 跨天重新给满次数
+            char prev[sizeof(auto_city)];
+            strcpy(prev, auto_city);
+            wx_update_auto_city(&last_ip_day, &ip_tries, m->day,
+                                auto_city, sizeof(auto_city));
+            // 自动城市变了且当前正用它（手填城市为空）→ 重解析 LocationID
+            if (strcmp(prev, auto_city) != 0 && !s_cfg.city[0]) {
+                city.id[0] = 0;
+                last_daily_day = -1;
+            }
+        }
 
         if (!s_cfg.weather_host[0] || !s_cfg.weather_apikey[0]) {
             ESP_LOGW(NET_TAG, "weather: host/apikey empty, skip");
@@ -416,15 +251,22 @@ void weather_task(void *arg)
                 s_weather_city_dirty = false;
                 city.id[0] = 0;
                 last_daily_day = -1;    // 换城市了，daily 数据也得重拉
-                ESP_LOGI(NET_TAG, "weather: city changed → re-resolve '%s'", s_cfg.city);
+                ESP_LOGI(NET_TAG, "weather: city changed → re-resolve '%s'",
+                         s_cfg.city[0] ? s_cfg.city : "(空→自动定位)");
             }
+
+            // 查询词：手填城市优先，其次自动定位结果
+            const char *q = s_cfg.city[0] ? s_cfg.city : auto_city;
+
             // 城市解析：city 变化或从未解析过时重跑一次
-            if (city.id[0] == 0) {
-                const char *q = s_cfg.city[0] ? s_cfg.city : "Beijing";
+            if (city.id[0] == 0 && q[0]) {
                 wx_geo_lookup(s_cfg.weather_host, s_cfg.weather_apikey, q, &city);
             }
             if (city.id[0] == 0) {
-                ESP_LOGW(NET_TAG, "weather: city resolve failed");
+                if (!q[0])
+                    ESP_LOGW(NET_TAG, "weather: 城市未配置且自动定位未成功，跳过本轮");
+                else
+                    ESP_LOGW(NET_TAG, "weather: city resolve failed ('%s')", q);
             } else if (wx_fetch_now(s_cfg.weather_host, s_cfg.weather_apikey, &city, m)) {
                 // Daily（temp_min/max, uv, sunrise/sunset）一天只需拉一次：
                 // 数值为空（首次）或跨天时请求，其余轮次复用缓存。
@@ -442,7 +284,7 @@ void weather_task(void *arg)
                     if (city.name[0]) {
                         wx_copy_utf8(m->city, sizeof(m->city), city.name);
                     } else if (!m->city[0]) {
-                        wx_copy_utf8(m->city, sizeof(m->city), s_cfg.city);
+                        wx_copy_utf8(m->city, sizeof(m->city), q);
                     }
                     snprintf(m->weather_update, sizeof(m->weather_update),
                              "%02d:%02d", m->hour, m->minute);

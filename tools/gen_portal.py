@@ -129,7 +129,12 @@ MOCK = r"""
     otemp:31.2,ohumi:44,feels:33.5,tmin:25,tmax:32,wind:"东北 12 km/h",
     sd:true,sd_used:124,sd_total:15200,uptime:39472,heap:148,
     chip:"ESP32-S3",app:"RLCD-Home 0.1",idf:"v6.0.1",mac:"84:F7:03:6C:AA:BB",flash_free:2048};
-  var CONFIG={ok:true,ssid:"MyHome_2.4G",city:"北京市",has_pass:true,has_key:true,has_host:true};
+  /* city 留空 = 演示"自动定位"形态（PUBIP.auto=true） */
+  var CONFIG={ok:true,ssid:"MyHome_2.4G",city:"",has_pass:true,has_key:true,has_host:true,
+    has_uapi:true};
+  var PUBIP={ok:true,valid:true,ip:"117.182.103.101",region:"中国 广西 南宁市",
+    isp:"China Mobile Communications Group Co., Ltd.",district:"青秀区",
+    auto:true,city:"青秀区"};
   var LIMITS={marks:32,events:16,labels:16,text:31};
   var CAL={ok:true,sd:true,marks:["01-01","02-14","10-01","12-25"],
     events:[{date:"02-14",text:"情人节"},{date:"10-01",text:"国庆节"}],
@@ -157,6 +162,7 @@ MOCK = r"""
     if(u==='/api/limits')   return J(LIMITS);
     if(u==='/api/scan')     return J(SCAN);
     if(u==='/api/config')   return post?J({ok:true}):J(CONFIG);
+    if(u==='/api/pubip')    return J(PUBIP);
     if(u==='/api/calendar') return post?J({ok:true}):J(CAL);
     if(u==='/api/data/csv') return Promise.resolve({ok:true,status:200,
       text:function(){return Promise.resolve(csv())},

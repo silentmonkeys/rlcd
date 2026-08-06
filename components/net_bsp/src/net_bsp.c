@@ -56,6 +56,9 @@ bool               s_want_sta   = false;
 int64_t            s_last_disconnected_us = 0;  // STA 断开时间戳(us)；0=已连/未启
 bool               s_offline_setup_shown  = false;
 volatile bool      s_weather_city_dirty   = false; // 改过城市 → weather_task 重解析
+volatile bool      s_uapi_city_kick       = false; // 门户点了"刷新城市" → 重跑 UAPI 定位
+uapi_myip_t        s_uapi_info;                    // 最近一次 UAPI 定位结果
+bool               s_uapi_valid           = false;
 
 // ------------ NVS ----------------------------------------------------
 bool NetBsp_LoadConfig(net_config_t *out)
@@ -71,6 +74,7 @@ bool NetBsp_LoadConfig(net_config_t *out)
     LOAD_STR(city);
     LOAD_STR(weather_apikey);
     LOAD_STR(weather_host);
+    LOAD_STR(uapi_key);
 #undef LOAD_STR
     nvs_close(nh);
     return out->ssid[0] != 0;
@@ -85,6 +89,7 @@ bool NetBsp_SaveConfig(const net_config_t *in)
     nvs_set_str(nh, "city",             in->city);
     nvs_set_str(nh, "weather_apikey",   in->weather_apikey);
     nvs_set_str(nh, "weather_host",     in->weather_host);
+    nvs_set_str(nh, "uapi_key",         in->uapi_key);
     esp_err_t err = nvs_commit(nh);
     nvs_close(nh);
     return err == ESP_OK;
@@ -132,13 +137,15 @@ void NetBsp_OfflineWatchdogTick(void)
 void NetBsp_Start(void)
 {
     if (!s_cfg_loaded) {
-        strcpy(s_cfg.city, "Beijing");
         s_cfg_loaded = NetBsp_LoadConfig(&s_cfg);
-        if (s_cfg.city[0] == 0)              strcpy(s_cfg.city, "Beijing");
+        // 城市留空**不再兜底 "Beijing"** —— 空 = 自动定位，
+        // 由 weather_task 每天调一次 UAPI /network/myip 取 district 当城市。
     }
-    ESP_LOGI(NET_TAG, "cfg loaded: host='%s' city='%s' apikey=%s",
-             s_cfg.weather_host, s_cfg.city,
-             s_cfg.weather_apikey[0] ? "set" : "EMPTY");
+    ESP_LOGI(NET_TAG, "cfg loaded: host='%s' city='%s' apikey=%s uapi_key=%s",
+             s_cfg.weather_host,
+             s_cfg.city[0] ? s_cfg.city : "(空→自动定位)",
+             s_cfg.weather_apikey[0] ? "set" : "EMPTY",
+             s_cfg.uapi_key[0] ? "set" : "EMPTY(访客配额)");
     // 日历配置从 SD 卡加载并推入 UI（不再走 NVS）
     cal_load_from_sd();
     s_wifi_events = xEventGroupCreate();
@@ -216,4 +223,20 @@ void NetBsp_TriggerWeatherFetch(void)
     if (s_weather_events) {
         xEventGroupSetBits(s_weather_events, BIT_WEATHER_KICK);
     }
+}
+
+// 手动刷新「自动城市」：置标志让 weather_task 下一轮无视每日节拍重跑 UAPI 定位，
+// 再 kick 一次天气让它立刻醒过来。用户手填了城市时自动定位本就不参与，
+// 这里也就只影响"城市留空"的情形（门户按钮同样只在留空时可点）。
+void NetBsp_TriggerCityRefresh(void)
+{
+    s_uapi_city_kick = true;
+    NetBsp_TriggerWeatherFetch();
+}
+
+bool NetBsp_GetPublicIp(uapi_myip_t *out)
+{
+    if (!out || !s_uapi_valid) return false;
+    *out = s_uapi_info;
+    return true;
 }

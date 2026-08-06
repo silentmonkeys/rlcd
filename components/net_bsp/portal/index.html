@@ -20,6 +20,10 @@
 <p class=hint>每 5 秒自动刷新</p></section>
 
 <section class=page id=p1>
+<div class=card><div class=cardhd><b>公网 IP</b>
+<button class='btn sm' id=btnpubip>刷新</button></div>
+<div class=grid id=pubip></div>
+<p class=hint id=pubiphint>数据来自 uapis.cn，每天获取一次。</p></div>
 <div class=card><div class=cardhd><b>附近的 WiFi</b>
 <button class='btn sm' id=btnscan>扫描</button></div>
 <div id=scan class=scan></div></div>
@@ -40,8 +44,10 @@
 <button class='btn sm' id=btnwx>立即刷新</button></div>
 <div class=grid id=wxnow></div></div>
 <div class=card>
-<label for=f_city>城市</label>
-<div class=inwrap><input id=f_city maxlength=31 placeholder='北京 或城市 ID' type=text></div>
+<div class=cardhd><b>城市</b>
+<button class='btn sm' id=btncity>重新定位</button></div>
+<div class=inwrap><input id=f_city maxlength=31 aria-label=城市 placeholder='北京 或城市 ID' type=text></div>
+<p class=hint>留空则每天按公网 IP 自动定位。</p>
 <label for=f_host>API Host</label>
 <div class=inwrap>
 <input id=f_host type=password maxlength=63 placeholder='••••••••'>
@@ -52,6 +58,12 @@
 <input id=f_key type=password maxlength=63 placeholder='••••••••'>
 <button type=button class='pwbtn hide' id=k_toggle>•</button>
 </div>
+<label for=f_uapi>UAPI Key</label>
+<div class=inwrap>
+<input id=f_uapi type=password maxlength=63 placeholder='uapi-…'>
+<button type=button class='pwbtn hide' id=u_toggle>•</button>
+</div>
+<p class=hint>供自动定位使用。留空则以访客配额调用。</p>
 <button class='btn primary' id=btnwxsave>保存设置</button>
 <p class=hint>天气配置立即生效，不需要重启。</p>
 </div></section>

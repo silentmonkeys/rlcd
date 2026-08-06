@@ -2,7 +2,9 @@ idf_component_register(
     SRCS "src/net_bsp.c"
          "src/net_wifi.c"
          "src/net_portal.c"
+         "src/net_http.c"
          "src/net_weather.c"
+         "src/net_uapi.c"
          "src/net_calendar.c"
     INCLUDE_DIRS "include"
     # user_config.h 目前放在 main/，通过 PRIV_INCLUDE_DIRS 直接引用而不 REQUIRES main

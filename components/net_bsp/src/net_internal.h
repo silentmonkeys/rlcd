@@ -49,6 +49,33 @@ extern bool               s_offline_setup_shown;   // 已因超时弹过一次 S
 // 城市 → LocationID 的解析结果缓存在 weather_task 的局部变量里，光改 NVS 不会生效；
 // 有了这个标志，改城市就不必重启设备。
 extern volatile bool      s_weather_city_dirty;
+// 门户「天气」页的刷新城市按钮 → 置位，weather_task 下一轮强制重跑 UAPI 定位。
+// 只在"用户没手填城市"时有意义（手填城市优先，自动定位不参与）。
+extern volatile bool      s_uapi_city_kick;
+// UAPI 最近一次定位结果（供门户「网络」页展示公网 IP / 归属地）。
+// 由 weather_task 写、httpd 任务读；都是整块小结构的字段级读写，
+// 读到"半新半旧"最坏只是显示上短暂不一致，不值得为它上锁。
+extern uapi_myip_t        s_uapi_info;
+extern bool               s_uapi_valid;
+
+// ------------ net_http.c（组件内共享 HTTP/gzip/JSON 工具） -------------
+// 一次 GET 的输入输出参数：请求前填 timeout_ms / 可选单个请求头；
+// 返回后 status = HTTP 状态码（0 表示连接失败），retry_after_s = Retry-After 秒数。
+typedef struct {
+    int         timeout_ms;
+    const char *hdr_name;      // 可选请求头名（如 "Authorization"）
+    const char *hdr_val;       // 可选请求头值（如 "Bearer uapi-xxx"）
+    int         status;        // 出参：HTTP 状态码
+    int         retry_after_s; // 出参：429 的 Retry-After（秒），无则 0
+} net_http_req_t;
+
+// 一次 HTTPS GET → malloc 的明文 body（需要时已 gunzip），caller free。
+// **非 2xx 也返回 body**（错误 JSON 在里面），状态码看 io->status。
+char *net_http_get_text(const char *url, net_http_req_t *io, size_t *out_len);
+char *net_gunzip(const char *gz, size_t gz_len, size_t *out_len);
+void  net_url_encode(char *out, size_t out_n, const char *in);
+bool  net_json_str(const char *body, const char *key, char *out, size_t out_n);
+void  net_copy_utf8(char *dst, size_t cap, const char *src);
 
 // ------------ net_wifi.c ---------------------------------------------
 void wifi_common_init(void);      // WiFi 公共初始化（只跑一次）
@@ -73,3 +100,8 @@ bool cal_save_to_sd(const char *marks, const char *events, const char *labels);
 
 // ------------ net_weather.c ------------------------------------------
 void weather_task(void *arg);     // 天气轮询任务（有凭据时由 NetBsp_Start 创建）
+
+// ------------ net_uapi.c ---------------------------------------------
+// 拉一次 UAPI /network/myip?source=commercial。成功返回 true 并填满 out
+// （ip/region/isp/district + 归一化出的 city）。失败已在内部打日志。
+bool NetBsp_FetchPublicIp(uapi_myip_t *out);

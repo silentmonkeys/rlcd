@@ -12,6 +12,8 @@
 //   POST /api/calendar       校验后写 SD，立即生效，不重启
 //   GET  /api/scan           WiFi 扫描 {ok,aps:[{ssid,rssi,auth}]}
 //   POST /api/weather_refresh  触发一次天气拉取
+//   POST /api/city_refresh   触发一次「自动城市」定位（仅城市留空时有效）
+//   GET  /api/pubip          最近一次 UAPI 定位结果（公网 IP / 归属地 / 运营商）
 //   POST /api/reboot         重启
 //   POST /api/forget         清 WiFi 凭据并重启
 //   404 → 302 /              让手机的 Captive Portal 探测自动弹出本页
@@ -492,6 +494,7 @@ static esp_err_t config_get(httpd_req_t *req)
     jw_kv_bool(&w, "has_pass", s_cfg.pass[0] != 0);
     jw_kv_bool(&w, "has_key",  s_cfg.weather_apikey[0] != 0);
     jw_kv_bool(&w, "has_host", s_cfg.weather_host[0] != 0);
+    jw_kv_bool(&w, "has_uapi", s_cfg.uapi_key[0] != 0);
     jw_putc(&w, '}');
     if (w.ovf) return send_err(req, "500 Internal Server Error", "配置数据过长");
     return send_json(req, "200 OK", buf);
@@ -528,11 +531,11 @@ static esp_err_t config_post(httpd_req_t *req)
     if (has && v[0]) {
         if (strcmp(c.pass, v) != 0) { strcpy(c.pass, v); net_changed = true; }
     }
-    // --- 城市 ---
+    // --- 城市：**允许清空** —— 空 = 自动定位（UAPI 取公网 IP 的 district） ---
     if (!opt_str(body, "city", v, sizeof(c.city), &has)) {
         free(body); return send_err(req, "400 Bad Request", "城市名过长（最多 31 字节，约 10 个汉字）");
     }
-    if (has && v[0] && strcmp(c.city, v) != 0) {
+    if (has && strcmp(c.city, v) != 0) {
         strcpy(c.city, v); wx_changed = true; city_changed = true;
     }
     // --- API Host ---
@@ -546,6 +549,17 @@ static esp_err_t config_post(httpd_req_t *req)
     }
     if (has && v[0] && strcmp(c.weather_apikey, v) != 0) {
         strcpy(c.weather_apikey, v); wx_changed = true;
+    }
+    // --- UAPI Key（自动定位用）：留空 = 不修改；文档要求形如 "uapi-xxx" ---
+    if (!opt_str(body, "uapikey", v, sizeof(c.uapi_key), &has)) {
+        free(body); return send_err(req, "400 Bad Request", "UAPI Key 过长（最多 63 字节）");
+    }
+    if (has && v[0]) {
+        if (strncmp(v, "uapi-", 5) != 0) {
+            free(body);
+            return send_err(req, "400 Bad Request", "UAPI Key 须以 uapi- 开头");
+        }
+        if (strcmp(c.uapi_key, v) != 0) { strcpy(c.uapi_key, v); wx_changed = true; }
     }
     free(body);
 
@@ -873,6 +887,44 @@ static esp_err_t weather_refresh_post(httpd_req_t *req)
     return send_ok(req);
 }
 
+// POST /api/city_refresh —— 手动重跑「自动城市」定位（UAPI /network/myip）。
+// 只在城市留空时有意义：用户手填了城市就以手填为准，自动定位不参与，
+// 这里直接回 409 让前端提示，而不是白白消耗一次 API 配额。
+static esp_err_t city_refresh_post(httpd_req_t *req)
+{
+    if (s_cfg.city[0]) {
+        return send_err(req, "409 Conflict", "请先清空城市再重新定位");
+    }
+    NetBsp_TriggerCityRefresh();
+    ESP_LOGI(NET_TAG, "portal: 手动触发自动城市定位");
+    return send_ok(req);
+}
+
+// GET /api/pubip —— 最近一次 UAPI 定位结果（公网 IP / 归属地 / 运营商）。
+// 尚未成功拉过时回 ok:true + valid:false，前端显示 "—"（不是错误，只是还没拿到）。
+static esp_err_t pubip_get(httpd_req_t *req)
+{
+    uapi_myip_t info;
+    bool valid = NetBsp_GetPublicIp(&info);
+
+    char buf[512];
+    jw_t w = { buf, sizeof(buf), 0, false };
+    jw_putc(&w, '{');
+    jw_kv_bool(&w, "ok",    true);
+    jw_kv_bool(&w, "valid", valid);
+    jw_kv_str (&w, "ip",       valid ? info.ip       : "");
+    jw_kv_str (&w, "region",   valid ? info.region   : "");
+    jw_kv_str (&w, "isp",      valid ? info.isp      : "");
+    jw_kv_str (&w, "district", valid ? info.district : "");
+    // auto=true 表示当前天气城市来自自动定位（用户没手填）
+    jw_kv_bool(&w, "auto", s_cfg.city[0] == 0);
+    jw_kv_str (&w, "city", valid ? info.city : "");
+    jw_putc(&w, '}');
+
+    if (w.ovf) return send_err(req, "500 Internal Server Error", "公网 IP 数据过长");
+    return send_json(req, "200 OK", buf);
+}
+
 static esp_err_t reboot_post(httpd_req_t *req)
 {
     send_ok(req);
@@ -994,6 +1046,8 @@ void config_httpd_start(void)
         { .uri = "/api/calendar",        .method = HTTP_POST, .handler = calendar_post },
         { .uri = "/api/scan",            .method = HTTP_GET,  .handler = scan_get },
         { .uri = "/api/weather_refresh", .method = HTTP_POST, .handler = weather_refresh_post },
+        { .uri = "/api/city_refresh",    .method = HTTP_POST, .handler = city_refresh_post },
+        { .uri = "/api/pubip",           .method = HTTP_GET,  .handler = pubip_get },
         { .uri = "/api/reboot",          .method = HTTP_POST, .handler = reboot_post },
         { .uri = "/api/forget",          .method = HTTP_POST, .handler = forget_post },
         { .uri = "/api/data/csv",        .method = HTTP_GET,  .handler = csv_get },

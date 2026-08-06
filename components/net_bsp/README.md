@@ -14,7 +14,9 @@ ESP32 上的 WiFi / HTTP 配网 / 天气拉取后台。天气固定走 **QWeathe
 | `src/portal_assets.h` | 门户前端资源，**自动生成**（gzip 字节数组，勿手改）|
 | `portal/index.html` `portal/style.css` `portal/app.js` | 门户前端**权威源码**（可编辑 / 可 lint）|
 | `portal/vendor/chart.umd.min.js` | Chart.js v4.4.8（按需加载，不进首屏）|
-| `src/net_weather.c` | QWeather API 拉取（HTTP + gzip 解压 + JSON 抽取）+ weather_task |
+| `src/net_http.c` | **共享** HTTPS GET + gzip 解压 + 扁平 JSON 取值 + UTF-8 安全拷贝（QWeather / UAPI 共用）|
+| `src/net_weather.c` | QWeather API 拉取 + weather_task（顺带每日一次 UAPI 定位）|
+| `src/net_uapi.c` | UAPI（uapis.cn）`/network/myip`：公网 IP + 自动城市 |
 | `src/net_calendar.c` | 日历配置存 SD 卡（原子写：temp + fsync + rename） |
 | `src/net_internal.h` | 组件内共享声明（extern 状态 + 内部函数原型） |
 
@@ -23,9 +25,10 @@ ESP32 上的 WiFi / HTTP 配网 / 天气拉取后台。天气固定走 **QWeathe
 | 字段 | 用途 |
 |---|---|
 | ssid / pass | STA 连接凭据 |
-| city | QWeather 城市名或 LocationID（如 "北京" / "101180106"）|
+| city | QWeather 城市名或 LocationID（如 "北京" / "101180106"）；**留空 = 自动定位**|
 | weather_apikey | QWeather API Key |
 | weather_host | QWeather API Host（每个开发者独立域名，如 xxx.re.qweatherapi.com）；GeoAPI 城市解析也走此主机 |
+| uapi_key | UAPI（uapis.cn）Key，形如 `uapi-…`；留空则按访客配额调用 |
 
 ## 天气流程（QWeather v7）
 
@@ -33,15 +36,38 @@ ESP32 上的 WiFi / HTTP 配网 / 天气拉取后台。天气固定走 **QWeathe
 2. 实况：`https://{host}/v7/weather/now?location=<id>&key=<key>`（主数据，含云量）
 3. 每日预报：`https://{host}/v7/weather/7d?location=<id>&key=<key>`（最低/最高温、日出日落、UV）
 
-响应强制 gzip，用 espressif/zlib 解压；JSON 用简易 `wx_json_str()` 扁平抽取，需
+响应强制 gzip，用 espressif/zlib 解压；JSON 用简易 `net_json_str()` 扁平抽取，需
 `esp_crt_bundle_attach`。成功 10min 一轮，失败 30s 重试；
 `NetBsp_TriggerWeatherFetch()` 可提前唤醒。
+
+## 自动城市 & 公网 IP（UAPI uapis.cn）
+
+`city` 留空时启用自动定位：
+
+```
+GET https://uapis.cn/api/v1/network/myip?source=commercial
+Authorization: Bearer <uapi-…>        # key 留空则不带此头（访客配额）
+→ {ip, region, isp, llc, asn, latitude, longitude, beginip, endip,
+   district, time_zone}               # district/time_zone 仅 commercial
+```
+
+用 `district`（缺失时退 `region` 末段）当查询词喂上面的 GeoAPI。要点：
+
+- **手填城市永远优先**：`city` 非空则完全不调 UAPI，不消耗配额。自动结果只存运行期
+  缓存，**绝不写回 `city`**。
+- **一天一次**，与 daily 天气共用「跨天」判据，挂在 weather_task 内（无独立任务）；
+  失败下轮重试但每天封顶 5 次。定位不受天气凭据缺失影响。
+- 错误处理按文档：400 `INVALID_STATE` / 401·403 鉴权 / 429 限流（读 `Retry-After`，
+  一天一次故不做内部快速重试）/ 500 `INTERNAL_SERVER_ERROR`；非 2xx 也读回 body 里的
+  `code`·`message` 再记日志。
 
 ## 公开 API
 
 ```c
 void NetBsp_Start(void);
 void NetBsp_TriggerWeatherFetch(void);
+void NetBsp_TriggerCityRefresh(void);    // 手动重跑自动定位（仅 city 留空时有效）
+bool NetBsp_GetPublicIp(uapi_myip_t *out);  // 最近一次定位结果（公网 IP / 归属地）
 void NetBsp_OfflineWatchdogTick(void);   // 无网看门狗一次性检查，由 user_app 5s 调用
 bool NetBsp_LoadConfig(net_config_t *out);
 bool NetBsp_SaveConfig(const net_config_t *in);
@@ -65,6 +91,8 @@ void NetBsp_ForgetWifi(void);
 | POST | `/api/calendar` | 校验后写 SD 并立即应用，不重启；超限/非法字符回 400 带原因 |
 | GET | `/api/scan` | 触发一次 WiFi 扫描，返回 `{ok:true,aps:[{ssid,rssi,auth}]}` |
 | POST | `/api/weather_refresh` | 强制立即拉取天气 |
+| POST | `/api/city_refresh` | 重跑「自动城市」定位；city 非空时回 409 |
+| GET | `/api/pubip` | 最近一次 UAPI 定位结果（ip / region / district / isp）|
 | GET | `/api/data/csv` | 下载温湿度历史记录 CSV（尾部最新 500 行，1460B 分块流式）|
 | POST | `/api/forget` | 清空 WiFi 凭据并重启 |
 | POST | `/api/reboot` | 重启设备 |

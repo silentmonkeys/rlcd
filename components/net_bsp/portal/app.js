@@ -27,6 +27,9 @@ function toggleCard(id){
 }
 function esc(s){return (''+s).replace(/&/g,'&amp;').replace(/</g,'&lt;')
 .replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;')}
+// .grid > .kv 的统一渲染 —— 状态/天气/系统/公网 IP 四处共用同一套结构
+function kvHtml(a){return a.map(function(x){return '<div class=kv><div class=k>'
++esc(x.k)+'</div><div class=v>'+esc(x.v)+'</div></div>'}).join('')}
 function dur(s){if(s==null)return '—';var d=Math.floor(s/86400),h=Math.floor(s%86400/3600),
 m=Math.floor(s%3600/60);return d?d+'天 '+h+'小时':(h?h+'小时 '+m+'分':m+'分')}
 function bars(r){return r>-55?'▂▄▆█':r>-68?'▂▄▆':r>-78?'▂▄':'•'}
@@ -46,21 +49,37 @@ function tick(){api('/api/status').then(function(s){
   S.push({k:'室外',v:(s.otemp!=null?s.otemp.toFixed(1)+' ℃':'—')+(s.wtext?' '+s.wtext:'')});
   S.push({k:'天气更新',v:s.wupd||'尚未获取'});S.push({k:'SD 卡',v:s.sd?(s.sd_used+' / '+s.sd_total+' MB'):'未插入'});
   S.push({k:'运行时长',v:dur(s.uptime)});
-  $('stat').innerHTML=S.map(function(x){return '<div class=kv><div class=k>'+esc(x.k)+'</div><div class=v>'+esc(x.v)+'</div></div>'}).join('');
+  $('stat').innerHTML=kvHtml(S);
   var W=[];W.push({k:'城市',v:s.city||'—'});W.push({k:'天气',v:s.wtext||'—'});
   W.push({k:'室外温度',v:s.otemp!=null?s.otemp.toFixed(1)+' ℃':'—'});
   W.push({k:'体感温度',v:s.feels!=null?s.feels.toFixed(1)+' ℃':'—'});
   W.push({k:'室外湿度',v:s.ohumi!=null?s.ohumi.toFixed(0)+' %':'—'});W.push({k:'风速',v:s.wind||'—'});
   W.push({k:'今日范围',v:s.tmin!=null?s.tmin+' ~ '+s.tmax+' ℃':'—'});W.push({k:'最后更新',v:s.wupd||'—'});
-  $('wxnow').innerHTML=W.map(function(x){return '<div class=kv><div class=k>'+esc(x.k)+'</div><div class=v>'+esc(x.v)+'</div></div>'}).join('');
+  $('wxnow').innerHTML=kvHtml(W);
   var Y=[];Y.push({k:'型号',v:s.chip||'—'});Y.push({k:'固件',v:s.app||'—'});Y.push({k:'ESP-IDF',v:s.idf||'—'});
   Y.push({k:'MAC',v:s.mac||'—'});Y.push({k:'空闲内存',v:s.heap!=null?s.heap+' KB':'—'});
   Y.push({k:'Flash 剩余',v:s.flash_free!=null?s.flash_free+' KB':'—'});Y.push({k:'运行时长',v:dur(s.uptime)});
   Y.push({k:'SD 卡',v:s.sd?'已挂载':'未插入'});
-  $('sysinfo').innerHTML=Y.map(function(x){return '<div class=kv><div class=k>'+esc(x.k)+'</div><div class=v>'+esc(x.v)+'</div></div>'}).join('');
+  $('sysinfo').innerHTML=kvHtml(Y);
   if(!s.sd){$('nosd').hidden=false;$('calbody').classList.add('off');}
   else{$('nosd').hidden=true;$('calbody').classList.remove('off');}
 }).catch(function(){})}
+
+// 公网 IP（uapis.cn /network/myip）—— 布局与天气卡片一致，同一套 .grid/.kv
+// 设备侧一天只拉一次，这里读的是缓存，随时可刷；auto=true 表示城市正由它自动定位。
+function pubipRender(p){
+  var P=[];
+  P.push({k:'公网 IP',v:p&&p.valid?p.ip:'—'});
+  P.push({k:'归属地',v:p&&p.valid&&p.region?p.region:'—'});
+  P.push({k:'行政区',v:p&&p.valid&&p.district?p.district:'—'});
+  P.push({k:'运营商',v:p&&p.valid&&p.isp?p.isp:'—'});
+  $('pubip').innerHTML=kvHtml(P);
+  var h=$('pubiphint');
+  if(!p||!p.valid)h.textContent='尚未获取。设备联网后每天获取一次。';
+  else if(p.auto)h.textContent='当前天气城市：'+(p.city||'—')+'（自动定位）';
+  else h.textContent='已手动指定城市，自动定位未启用。';
+}
+function loadPubip(){return api('/api/pubip').then(pubipRender).catch(function(){})}
 
 function cnt(id,n,max){$(id).textContent=n+' / '+max}
 function render(){
@@ -159,6 +178,7 @@ function loadData(){
 
 document.addEventListener('DOMContentLoaded', function(){
   pwbtn('p_toggle','f_pass');pwbtn('h_toggle','f_host');pwbtn('k_toggle','f_key');
+  pwbtn('u_toggle','f_uapi');
   ['marks','events','labels'].forEach(function(id){
     var collapsed=localStorage.getItem('cal_'+id)!=='0';
     var btn=$(id+'_btn'),card=btn.closest('.card');
@@ -190,13 +210,24 @@ document.addEventListener('DOMContentLoaded', function(){
     }).catch(function(e){toast(e.message,'bad');busy('btnnet',false)})});
   on('btnwxsave',function(){busy('btnwxsave',true);
     post('/api/config',{city:$('f_city').value.trim(),host:$('f_host').value,
-apikey:$('f_key').value}).then(function(){
-      $('f_key').value='';$('f_host').value='';toast('已保存，正在刷新天气','ok');
+apikey:$('f_key').value,uapikey:$('f_uapi').value.trim()}).then(function(){
+      $('f_key').value='';$('f_host').value='';$('f_uapi').value='';
+      toast('已保存，正在刷新天气','ok');
       return post('/api/weather_refresh')}).catch(function(e){toast(e.message,'bad')})
-    .then(function(){busy('btnwxsave',false);setTimeout(tick,3000)})});
+    .then(function(){busy('btnwxsave',false);setTimeout(function(){tick();loadPubip()},3000)})});
   on('btnwx',function(){busy('btnwx',true);post('/api/weather_refresh')
     .then(function(){toast('已触发刷新','ok');setTimeout(tick,3000)})
     .catch(function(e){toast(e.message,'bad')}).then(function(){busy('btnwx',false)})});
+  // 重新定位：仅在城市留空时后端才受理（否则回 409，手填城市优先）
+  on('btncity',function(){
+    if($('f_city').value.trim()){toast('请先清空城市再重新定位','bad');return}
+    busy('btncity',true);post('/api/city_refresh')
+    .then(function(){toast('正在定位','ok');
+      setTimeout(function(){tick();loadPubip()},5000)})
+    .catch(function(e){toast(e.message,'bad')}).then(function(){busy('btncity',false)})});
+  // 公网 IP 卡片的刷新：读设备缓存（一天一次的拉取结果），不额外消耗 API 配额
+  on('btnpubip',function(){busy('btnpubip',true);
+    loadPubip().then(function(){busy('btnpubip',false)})});
   on('btnmark',function(){var v=mmdd($('i_mark').value);if(!v){toast('请先选择日期','bad');return}
     if(marks.indexOf(v)>=0){toast('该日期已在列表中','bad');return}
     marks.push(v);marks.sort();$('i_mark').value='';dirty=true;render()});
@@ -234,8 +265,10 @@ apikey:$('f_key').value}).then(function(){
     $('f_pass').placeholder=c.has_pass?'••••••••':'尚未设置';
     $('f_key').placeholder=c.has_key?'••••••••':'尚未设置';
     $('f_host').placeholder=c.has_host?'••••••••':'xxx.re.qweatherapi.com';
+    $('f_uapi').placeholder=c.has_uapi?'••••••••':'uapi-…';
   }).catch(function(){});
   tick();setInterval(tick,5000);
+  loadPubip();
   setTimeout(function(){var obs=new IntersectionObserver(function(es){es.forEach(function(e){
     if(e.isIntersecting&&!rawRows){obs.disconnect();loadData();}
   })});obs.observe($('cv'));},200);
