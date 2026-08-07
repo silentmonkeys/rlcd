@@ -89,6 +89,13 @@ void softap_stop(void);
 
 // ------------ net_portal.c -------------------------------------------
 void config_httpd_start(void);    // 启动配网 HTTP 服务器（幂等）
+// 统一 JSON 回执，net_ota.c 复用（定义在 net_portal.c）
+esp_err_t send_err(httpd_req_t *req, const char *status, const char *msg);
+esp_err_t send_ok(httpd_req_t *req);
+
+// ------------ net_ota.c ----------------------------------------------
+// POST /api/ota —— 接收 raw .bin 流式写入备用 app 槽，成功后切分区并重启。
+esp_err_t ota_post(httpd_req_t *req);
 
 // ------------ net_calendar.c -----------------------------------------
 // 读 SD 上的日历文件，拆成三段字符串。SD 未挂载/文件不存在 → 三段空，返回 false。

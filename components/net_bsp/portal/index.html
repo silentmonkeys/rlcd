@@ -5,7 +5,7 @@
 <style>{{STYLE}}</style>
 </head><body>
 
-<header><h1>RLCD 控制台</h1><span id=hdrdot class=dot></span><span id=hdrnet>连接中…</span></header>
+<header><h1>RLCD 控制台</h1><span id=hdrdot class=dot></span><span id=hdrnet>正在连接</span></header>
 
 <nav class=tabs>
 <button class='tab active' data-t=0>状态</button>
@@ -16,15 +16,18 @@
 <button class=tab data-t=5>系统</button>
 </nav>
 
-<section class='page active' id=p0><div class=grid id=stat></div>
-<p class=hint>每 5 秒自动刷新</p></section>
+<section class='page active' id=p0>
+<div class=card><div class=cardhd><b>设备状态</b>
+<button class='btn sm' id=btnstat>刷新</button></div>
+<div class=grid id=stat></div>
+<p class=hint>数据每 5 秒自动刷新。</p></div></section>
 
 <section class=page id=p1>
-<div class=card><div class=cardhd><b>公网 IP</b>
+<div class=card><div class=cardhd><b>公网 IP 信息</b>
 <button class='btn sm' id=btnpubip>刷新</button></div>
 <div class=grid id=pubip></div>
-<p class=hint id=pubiphint>数据来自 uapis.cn，每天获取一次。</p></div>
-<div class=card><div class=cardhd><b>附近的 WiFi</b>
+<p class=hint id=pubiphint>数据来源 uapis.cn，每日获取一次。</p></div>
+<div class=card><div class=cardhd><b>可用无线网络</b>
 <button class='btn sm' id=btnscan>扫描</button></div>
 <div id=scan class=scan></div></div>
 <div class=card>
@@ -33,44 +36,44 @@
 <label for=f_pass>WiFi 密码</label>
 <div class=inwrap>
 <input id=f_pass type=password maxlength=64 autocomplete=new-password placeholder='••••••••'>
-<button type=button class='pwbtn hide' id=p_toggle>•</button>
+<button type=button class='pwbtn hide' id=p_toggle aria-label=显示密码></button>
 </div>
-<p class=hint>ESP32-S3 只支持 2.4GHz 频段。</p>
+<p class=hint>本设备仅支持 2.4GHz 频段的无线网络。</p>
 <button class='btn primary' id=btnnet>保存并重启</button>
 </div></section>
 
 <section class=page id=p2>
-<div class=card><div class=cardhd><b>当前读数</b>
+<div class=card><div class=cardhd><b>当前天气数据</b>
 <button class='btn sm' id=btnwx>立即刷新</button></div>
 <div class=grid id=wxnow></div></div>
 <div class=card>
-<div class=cardhd><b>城市</b>
+<div class=cardhd><b>城市与接口凭据</b>
 <button class='btn sm' id=btncity>重新定位</button></div>
-<div class=inwrap><input id=f_city maxlength=31 aria-label=城市 placeholder='北京 或城市 ID' type=text></div>
-<p class=hint>留空则每天按公网 IP 自动定位。</p>
+<div class=inwrap><input id=f_city maxlength=31 aria-label=城市 placeholder='城市名称或城市 ID' type=text></div>
+<p class=hint>留空时，设备每日依据公网 IP 自动确定所在城市。</p>
 <label for=f_host>API Host</label>
 <div class=inwrap>
 <input id=f_host type=password maxlength=63 placeholder='••••••••'>
-<button type=button class='pwbtn hide' id=h_toggle>•</button>
+<button type=button class='pwbtn hide' id=h_toggle aria-label=显示内容></button>
 </div>
 <label for=f_key>API Key</label>
 <div class=inwrap>
 <input id=f_key type=password maxlength=63 placeholder='••••••••'>
-<button type=button class='pwbtn hide' id=k_toggle>•</button>
+<button type=button class='pwbtn hide' id=k_toggle aria-label=显示内容></button>
 </div>
 <label for=f_uapi>UAPI Key</label>
 <div class=inwrap>
 <input id=f_uapi type=password maxlength=63 placeholder='uapi-…'>
-<button type=button class='pwbtn hide' id=u_toggle>•</button>
+<button type=button class='pwbtn hide' id=u_toggle aria-label=显示内容></button>
 </div>
-<p class=hint>供自动定位使用。留空则以访客配额调用。</p>
+<p class=hint>用于自动定位。留空时按访客配额调用。</p>
 <button class='btn primary' id=btnwxsave>保存设置</button>
-<p class=hint>天气配置立即生效，不需要重启。</p>
+<p class=hint>天气配置保存后立即生效，无需重启设备。</p>
 </div></section>
 
 <section class=page id=p3>
 <div class=card id=nosd hidden><b class=err>未检测到 SD 卡</b>
-<p class=hint>日历数据保存在 SD 卡上。请插入 SD 卡后刷新。</p></div>
+<p class=hint>日历数据存储于 SD 卡。请插入 SD 卡后刷新本页。</p></div>
 <div id=calbody>
 <div class=calgrid>
 <div class=card collapsed>
@@ -87,7 +90,7 @@
 <div class=collapsible style="max-height:1000px">
 <div id=events class=list></div>
 <div class='add two'>
-<div class=inwrap><input type=text id=i_etext class=tx placeholder=内容文字></div>
+<div class=inwrap><input type=text id=i_etext class=tx placeholder=事项内容></div>
 <div class=inwrap><input type=date id=i_edate class=dt></div>
 <button class='btn sm bt' id=btnevt>添加</button>
 </div></div></div>
@@ -97,15 +100,15 @@
 <div class=collapsible style="max-height:1000px">
 <label class=sw><input type=checkbox id=lab_on><span>启用</span></label>
 <div id=labbox hidden><div id=labels class=list></div>
-<div class=add><div class=inwrap><input type=text id=i_label placeholder=标签文字></div>
+<div class=add><div class=inwrap><input type=text id=i_label placeholder=标签内容></div>
 <button class='btn sm' id=btnlab>添加</button></div></div></div></div>
 </div>
 <button class='btn primary' id=btncal>保存日历</button>
-<p class=hint>写入 SD 卡并立即生效，不重启。</p>
+<p class=hint>保存至 SD 卡后立即生效，无需重启设备。</p>
 </div></section>
 
 <section class=page id=p4>
-<div class=card><div class=cardhd><b>环境温湿度趋势</b>
+<div class=card><div class=cardhd><b>室内温湿度趋势</b>
 <select id=range_sel class=auto>
 <option value=6>1 小时</option>
 <option value=18>3 小时</option>
@@ -115,18 +118,30 @@
 </select></div>
 <div class=chartwrap style="height:260px"><canvas id=cv></canvas></div>
 </div>
-<div class=card><b>数据下载</b>
-<p class=hint>CSV 格式：时间,室内温,室内湿,室外温,室外湿,天气,城市,RSSI</p>
-<button class='btn primary' id=btndl>下载全部数据</button>
+<div class=card><b>数据导出</b>
+<p class=hint>CSV 字段：时间、室内温度、室内湿度、室外温度、室外湿度、天气、城市、信号强度。</p>
+<div class=dlrow>
+<button class=btn id=btndlview>导出当前图表数据</button>
+<button class='btn primary' id=btndl>导出完整记录</button>
+</div>
+<p class=hint id=dlhint>「当前图表数据」仅包含图表所选时间范围内的记录；「完整记录」包含 SD 卡内的全部历史数据。</p>
 </div></section>
 
 <section class=page id=p5>
 <div class=card><div class=grid id=sysinfo></div></div>
+<div class=card><b>固件升级</b>
+<p class=hint>选择编译生成的 <code>rlcd_home.bin</code> 固件文件。升级过程中请勿断电或断开网络。</p>
+<div class=inwrap><input type=file id=f_fw accept=.bin></div>
+<div id=otabox hidden><div class=bar><i id=otabar></i></div>
+<p class=hint id=otamsg>准备中</p></div>
+<button class='btn primary' id=btnota disabled>上传并升级</button>
+<p class=warn>升级完成后设备将自动重启，约 15 秒后重新上线。</p>
+</div>
 <div class=card><b>维护操作</b>
 <button class=btn id=btnreboot>重启设备</button>
-<p class=hint>约 10 秒后重新上线。</p>
+<p class=hint>设备将在约 10 秒后重新上线。</p>
 <button class='btn danger' id=btnforget>清除 WiFi 配置</button>
-<p class=warn>清除后设备重启并回到配网模式。</p>
+<p class=warn>清除后设备将重启并进入配网模式。</p>
 </div></section>
 
 <div id=toast></div>

@@ -82,14 +82,25 @@ input::placeholder,textarea::placeholder{color:var(--mut)!important;opacity:.4!i
 
 /* 输入框包裹层 —— .pwbtn 是 absolute，必须有个定位祖先才不会飞到页面角上 */
 .inwrap{position:relative;display:block}
+/* 带切换按钮的输入框留出右侧空位，明文时长内容不会钻到图标下面 */
+.inwrap:has(.pwbtn) input{padding-right:40px!important}
 
-.pwbtn{position:absolute;right:0;top:0;width:36px;height:38px;
-background:none!important;border:0!important;font-size:16px;color:var(--mut);cursor:pointer;
+/* 显示/隐藏密码按钮 —— 图标用 SVG mask 画线稿眼睛，颜色跟随 currentColor，
+   不再用 👁 / • 这类 emoji（各平台字形不一、大小不可控、垂直居中也不准）。
+   .hide = 闭眼（内容隐藏中），.show = 睁眼（内容明文）。 */
+.pwbtn{position:absolute;right:0;top:0;width:38px;height:38px;
+background:none!important;border:0!important;color:var(--mut);cursor:pointer;
 display:flex;align-items:center;justify-content:center;border-radius:0 7px 7px 0;
-transition:.15s}
+padding:0;transition:color .15s,opacity .15s}
+.pwbtn::before{content:'';width:18px;height:18px;background-color:currentColor;
+-webkit-mask:var(--ico) center/18px 18px no-repeat;
+mask:var(--ico) center/18px 18px no-repeat}
+.pwbtn.hide{--ico:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24'/%3E%3Cline x1='1' y1='1' x2='23' y2='23'/%3E%3C/svg%3E")}
+.pwbtn.show{--ico:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z'/%3E%3Ccircle cx='12' cy='12' r='3'/%3E%3C/svg%3E");
+color:var(--acc)}
+.pwbtn:hover{color:var(--fg)}
+.pwbtn.show:hover{color:var(--acc)}
 .pwbtn:active{opacity:.5}
-.pwbtn.show{opacity:1;color:var(--fg)}
-.pwbtn.hide{opacity:.4}
 
 .btn{width:100%;margin-top:10px;padding:9px;font:inherit;font-weight:600;cursor:pointer;
 color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:7px}
@@ -113,6 +124,10 @@ border-top:1px solid var(--line)}
 .ap .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ap .rs{font-size:12px;color:var(--mut);font-variant-numeric:tabular-nums;flex:none}
 .ap .cur{font-size:11px;color:var(--ok);flex:none}
+/* 加密网络标识 —— 线稿挂锁，与 .pwbtn 同样用 SVG mask，不使用 emoji */
+.ap .lock{flex:none;width:13px;height:13px;background-color:var(--mut);
+-webkit-mask:var(--l) center/13px 13px no-repeat;mask:var(--l) center/13px 13px no-repeat;
+--l:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='11' width='18' height='11' rx='2'/%3E%3Cpath d='M7 11V7a5 5 0 0 1 10 0v4'/%3E%3C/svg%3E")}
 
 .list:empty::after{content:'暂无';font-size:12px;color:var(--mut)}
 .list{margin-bottom:8px}
@@ -137,6 +152,28 @@ color:var(--err);background:none;border:0;border-radius:5px;cursor:pointer}
 
 .calgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(100%,1fr));gap:10px}
 .calgrid .card{margin:0}
+
+/* 数据导出：两个按钮并排，窄屏自动堆叠 */
+.dlrow{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}
+.dlrow .btn{margin-top:0}
+@media(max-width:420px){.dlrow{grid-template-columns:1fr}}
+
+/* 固件上传：文件选择框与其他输入框同高同风格 */
+input[type=file]{width:100%;height:38px;padding:6px 10px;font:inherit;font-size:13px;
+color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:7px;
+cursor:pointer}
+input[type=file]::file-selector-button{margin-right:10px;padding:4px 10px;font:inherit;
+font-size:12px;color:var(--fg);background:var(--card);border:1px solid var(--line);
+border-radius:5px;cursor:pointer}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;
+background:var(--bg);padding:1px 5px;border-radius:4px}
+
+/* OTA 进度条 */
+.bar{height:6px;margin-top:10px;background:var(--bg);border:1px solid var(--line);
+border-radius:99px;overflow:hidden}
+.bar i{display:block;height:100%;width:0;background:var(--acc);
+border-radius:99px;transition:width .2s}
+.bar.done i{background:var(--ok)}.bar.bad i{background:var(--err)}
 
 #calbody.off{opacity:.45;pointer-events:none}
 

@@ -25,9 +25,18 @@ cd simulator && cmake -B build && cmake --build build -j
 ./build/rlcd_sim
 # 抓帧：./build/rlcd_sim --capture /tmp/frame.ppm --capture-ms 1500
 # 控制台：mark MM-DD 标注日历 / unmark 清除 / page N 切页
+# 图形化调试：python3 tools/rlcd_debug_gui/rlcd_debug_gui.py
 ```
 
 键（窗口模式）：`ESC` `S` 存帧 / `+ -` 缩放。
+
+模拟器同时监听 TCP `127.0.0.1:9000`，协议是**字段表驱动**的：字段表在
+`simulator/sim_console.c` 的 `FIELDS[]`（48 个），**加字段只改两处** ——
+`FIELDS[]` 加一行 `FLD(...)` + `sim_console.h` 加一个 `OVR_*` 位
+（`set`/`get`/`dump`/`help` 全部自动跟上）。每条命令的响应后会再发一个
+**空行作为帧终止**，客户端据此判断读完。`sim_tick_data()` 500ms 一拍，
+按 override 位决定是否重填，所以 `clear` 后要等 >500ms 才读到恢复值。
+GUI 客户端见 [tools/rlcd_debug_gui/README.md](tools/rlcd_debug_gui/README.md)。
 
 ## 架构
 
@@ -62,7 +71,7 @@ cd simulator && cmake -B build && cmake --build build -j
 - **port_bsp** — DisplayPort C++ 类（SPI3 驱动 RLCD）、I2C 主机 + SHTC3 驱动、按键 BSP（multi_button + 5ms tick）、电池 ADC（`adc_bsp` — ADC1_CH3/GPIO4 + 曲线校准 ×3 分压）、SD 卡 BSP（SDMMC 1-line + 5s 热插拔探活）。引脚见 `main/user_config.h`。
 - **app_bsp** — LVGL v9 端口：tick 定时器、任务 handler、互斥（Lvgl_lock/unlock）。
 - **ui** — 共享 UI。`ui_home_create()` 建树；其他任务写 `ui_model_get()` 后调 `ui_home_request_refresh()` 或 `ui_home_apply_locked()`。
-- **net_bsp** — WiFi STA/SoftAP、HTTP 配网门户、NVS 持久化、天气拉取（**QWeather** 单一 provider）。按职责拆为多文件：`net_bsp.c`（入口 + 共享状态 + NVS + 看门狗）/ `net_wifi.c`（WiFi 事件 + SNTP）/ `net_portal.c`（管理门户：静态资源 + JSON API）/ `net_http.c`（**共享** HTTPS GET + gzip 解压 + 轻量 JSON 取值，QWeather 与 UAPI 共用）/ `net_weather.c`（QWeather API）/ `net_uapi.c`（**UAPI uapis.cn** `/network/myip`：公网 IP + 自动城市）/ `net_calendar.c`（日历存 SD，原子写）/ `net_internal.h`（组件内共享声明）。对外 API 仍只在 `net_bsp.h`。门户前端**权威源码在 `components/net_bsp/portal/`**（index.html / style.css / app.js），改完必须跑 `python3 tools/gen_portal.py` 重新生成 `src/portal_assets.h`（gzip 字节数组，勿手改）+ `simulator/portal_preview.html`（带 mock，浏览器直接打开可预览）。
+- **net_bsp** — WiFi STA/SoftAP、HTTP 配网门户、NVS 持久化、天气拉取（**QWeather** 单一 provider）。按职责拆为多文件：`net_bsp.c`（入口 + 共享状态 + NVS + 看门狗）/ `net_wifi.c`（WiFi 事件 + SNTP）/ `net_portal.c`（管理门户：静态资源 + JSON API）/ `net_http.c`（**共享** HTTPS GET + gzip 解压 + 轻量 JSON 取值，QWeather 与 UAPI 共用）/ `net_weather.c`（QWeather API）/ `net_uapi.c`（**UAPI uapis.cn** `/network/myip`：公网 IP + 自动城市）/ `net_calendar.c`（日历存 SD，原子写）/ `net_ota.c`（`POST /api/ota` 流式接收固件写备用 app 槽）/ `net_internal.h`（组件内共享声明）。对外 API 仍只在 `net_bsp.h`。门户前端**权威源码在 `components/net_bsp/portal/`**（index.html / style.css / app.js），改完必须跑 `python3 tools/gen_portal.py` 重新生成 `src/portal_assets.h`（gzip 字节数组，勿手改）+ `simulator/portal_preview.html`（带 mock，浏览器直接打开可预览）。
 - **user_app** — 传感器 / 电池 ADC 初始化 + 1Hz tick 任务把读数写入 ui_model（温湿度每秒；电量、充电趋势、SD 探活、无网看门狗共用 5s 慢节拍）；独立 CSV 日志任务（fsync 落盘）。RTC 待硬件到货再接。
 
 ## 后台任务与节拍
@@ -71,7 +80,7 @@ cd simulator && cmake -B build && cmake --build build -j
 
 | 任务 / 回调              | 节拍                  | 职责                                                                                     |
 | ------------------------ | --------------------- | ---------------------------------------------------------------------------------------- |
-| user_tick                | 1s；**5s 慢节拍**     | 每秒读时间 + SHTC3；5s 慢节拍做 SD 热插拔探活 + 电池采样 +`NetBsp_OfflineWatchdogTick()` |
+| user_tick                | 1s；**5s 慢节拍**     | 每秒读时间 + SHTC3；5s 慢节拍做 SD 热插拔探活 + 电池采样 +`NetBsp_OfflineWatchdogTick()` + `NetBsp_OtaSelfTestTick()` |
 | csv_log                  | 10min                 | 追加一行 CSV 到 SD（首帧延迟 15s，fsync 落盘）                                           |
 | weather                  | 成功 10min / 失败 30s | 拉 QWeather；**顺带每日一次 UAPI 定位**（自动城市 + 公网 IP）；事件位可提前唤醒 |
 | LVGL                     | 自适应 1~500ms        | `lv_timer_handler()` 渲染                                                                |
@@ -79,6 +88,8 @@ cd simulator && cmake -B build && cmake --build build -j
 | lvgl tick（esp_timer）   | 5ms                   | 给 LVGL 喂 tick                                                                          |
 
 > 无网看门狗不自带任务：做成一次性 `NetBsp_OfflineWatchdogTick()`，由 user_tick 的 5s 慢节拍调用（状态未就绪时函数自身 early-return，早启无害）。
+>
+> **OTA 自检确认**同样是一次性的 `NetBsp_OtaSelfTestTick()`，挂在同一条 5s 慢节拍上：新固件首次启动处于 `PENDING_VERIFY`，稳定跑满 60s 才调 `esp_ota_mark_app_valid_cancel_rollback()`；若这之前崩溃重启，bootloader 自动回滚到旧槽。非 OTA 启动时函数第一次调用就 early-return 并自锁，零开销。依赖 `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y`。
 
 ## 自动城市 & 公网 IP（UAPI uapis.cn）
 
@@ -105,7 +116,9 @@ cd simulator && cmake -B build && cmake --build build -j
 
 ## 字体
 
-字库**存在独立 `fonts` SPIFFS 分区（2MB）**，运行时用 `lv_binfont_create()` 从 `/spiffs` 加载，不再编译进固件。
+字库**存在独立 `fonts` SPIFFS 分区（1MB，当前实占约 257KB）**，运行时用 `lv_binfont_create()` 从 `/spiffs` 加载，不再编译进固件。
+
+> **OTA 只写 app 槽，不动 `fonts` 分区。** 所以改过字库/天气图标的版本，发布时必须写明"需用 `full.bin` 整片重烧"，否则新 app 配旧字库会出现空白/豆腐块。见 `.github/release_notes.md`。
 
 - `tools/gen_font.sh` 用 lv_font_conv 生成 **3 个 `.bin`** 到 `partitions/fonts/`：`ui_font_cjk_16.bin`（GB2312 一二级共 6763 字 + 标点 + ASCII）、`ui_font_digit_big.bin`（96px 时钟）、`ui_font_digit_mid.bin`（28px 卡片数值）。需要 `/home/chen/.npm-global/bin` 在 PATH。
 - 加字：改 `gen_font.sh` 的字符集 → `bash tools/gen_font.sh` → `idf.py build && idf.py flash`（或只烧字库不动 app：先 `idf.py partition-table` 再 flash）。**不用改 C 代码**。

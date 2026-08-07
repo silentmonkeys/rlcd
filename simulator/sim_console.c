@@ -14,6 +14,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stddef.h>     // offsetof —— 字段表用
 #include <errno.h>
 #include <time.h>
 #include <pthread.h>
@@ -99,36 +100,160 @@ static cmd_queue_t s_queue;
 
 // ---- override 位图 ----------------------------------------------
 // 每位对应 ui_model_t 中"可被外部设置、sim_tick_data 不应覆盖"的字段。
-// 位定义在 sim_console.h 的 OVR_* 宏里，这里用前缀 F_ 避免和宏重名。
-enum {
-    F_INDOOR_TEMP  = OVR_INDOOR_TEMP,
-    F_INDOOR_HUMI  = OVR_INDOOR_HUMI,
-    F_OUTDOOR_TEMP = OVR_OUTDOOR_TEMP,
-    F_WEATHER_CODE = OVR_WEATHER_CODE,
-    F_WEATHER_TEXT = OVR_WEATHER_TEXT,
-    F_CITY         = OVR_CITY,
-    F_WIFI_CONN    = OVR_WIFI_CONN,
-    F_WIFI_RSSI    = OVR_WIFI_RSSI,
-    F_BAT_PCT      = OVR_BAT_PCT,
-    F_BAT_CHG      = OVR_BAT_CHG,
-    F_FEELS_LIKE   = OVR_FEELS_LIKE,
-    F_OUTDOOR_HUMI = OVR_OUTDOOR_HUMI,
-    F_WIND_SPD     = OVR_WIND_SPD,
-    F_WIND_DIR     = OVR_WIND_DIR,
-    F_CLOUD        = OVR_CLOUD,
-    F_PRESSURE     = OVR_PRESSURE,
-    F_VISIBILITY   = OVR_VISIBILITY,
-    F_UV           = OVR_UV,
-    F_TEMP_MIN     = OVR_TEMP_MIN,
-    F_TEMP_MAX     = OVR_TEMP_MAX,
-    F_SUNRISE      = OVR_SUNRISE,
-    F_SUNSET       = OVR_SUNSET,
-};
-
-static uint32_t s_override = 0;
+// 位定义在 sim_console.h 的 OVR_* 宏里。
+static uint64_t s_override = 0;
 
 // 提供给 main.c：sim_tick_data 查询哪些字段被外部设置
-uint32_t sim_console_override_mask(void) { return s_override; }
+uint64_t sim_console_override_mask(void) { return s_override; }
+
+// ---- 字段表（唯一真源）------------------------------------------
+// set / get / dump / sim_console_set_field_override 全部走这张表。
+// 加字段只需在这里加一行 + 在 sim_console.h 加一个 OVR_* 位。
+typedef enum {
+    FT_F32,     // float
+    FT_I32,     // int
+    FT_I8,      // int8_t
+    FT_U8,      // uint8_t
+    FT_U32,     // uint32_t
+    FT_BOOL,    // bool
+    FT_STR,     // char[]，size 为数组容量
+} field_type_t;
+
+typedef struct {
+    const char  *name;
+    field_type_t type;
+    size_t       offset;    // offsetof(ui_model_t, xxx)
+    size_t       size;      // 仅 FT_STR 用：数组容量（含结尾 0）
+    uint64_t     ovr_bit;   // 0 表示该字段不参与 override
+} field_desc_t;
+
+#define FLD(n, t, member, bit) \
+    { n, t, offsetof(ui_model_t, member), sizeof(((ui_model_t *)0)->member), bit }
+
+static const field_desc_t FIELDS[] = {
+    // ---- 时间（6 个字段共用 OVR_TIME 一位）----
+    FLD("hour",             FT_I32,  hour,             OVR_TIME),
+    FLD("minute",           FT_I32,  minute,           OVR_TIME),
+    FLD("year",             FT_I32,  year,             OVR_TIME),
+    FLD("month",            FT_I32,  month,            OVR_TIME),
+    FLD("day",              FT_I32,  day,              OVR_TIME),
+    FLD("weekday",          FT_I32,  weekday,          OVR_TIME),
+
+    // ---- 室内传感器 ----
+    FLD("indoor_temp",      FT_F32,  indoor_temp,      OVR_INDOOR_TEMP),
+    FLD("indoor_humi",      FT_F32,  indoor_humi,      OVR_INDOOR_HUMI),
+
+    // ---- 室外天气 ----
+    FLD("outdoor_temp",     FT_F32,  outdoor_temp,     OVR_OUTDOOR_TEMP),
+    FLD("weather_code",     FT_I32,  weather_code,     OVR_WEATHER_CODE),
+    FLD("weather_text",     FT_STR,  weather_text,     OVR_WEATHER_TEXT),
+    FLD("city",             FT_STR,  city,             OVR_CITY),
+    FLD("weather_update",   FT_STR,  weather_update,   OVR_WEATHER_UPD),
+
+    // ---- 天气详情页 ----
+    FLD("outdoor_humi",     FT_F32,  outdoor_humi,     OVR_OUTDOOR_HUMI),
+    FLD("wind_speed",       FT_F32,  wind_speed_kmh,   OVR_WIND_SPD),
+    FLD("wind_dir",         FT_STR,  wind_dir,         OVR_WIND_DIR),
+    FLD("cloud",            FT_I32,  cloud_pct,        OVR_CLOUD),
+    FLD("pressure",         FT_I32,  pressure_hpa,     OVR_PRESSURE),
+    FLD("visibility",       FT_I32,  visibility_km,    OVR_VISIBILITY),
+    FLD("feels_like_temp",  FT_F32,  feels_like_temp,  OVR_FEELS_LIKE),
+    FLD("uv",               FT_I32,  uv_index,         OVR_UV),
+    FLD("temp_min",         FT_I32,  temp_min,         OVR_TEMP_MIN),
+    FLD("temp_max",         FT_I32,  temp_max,         OVR_TEMP_MAX),
+    FLD("sunrise",          FT_STR,  sunrise,          OVR_SUNRISE),
+    FLD("sunset",           FT_STR,  sunset,           OVR_SUNSET),
+
+    // ---- 状态栏 ----
+    FLD("wifi_connected",   FT_BOOL, wifi_connected,   OVR_WIFI_CONN),
+    FLD("wifi_rssi",        FT_I8,   wifi_rssi,        OVR_WIFI_RSSI),
+    FLD("battery_percent",  FT_U8,   battery_percent,  OVR_BAT_PCT),
+    FLD("battery_charging", FT_BOOL, battery_charging, OVR_BAT_CHG),
+
+    // ---- 设备信息页 ----
+    FLD("ip",               FT_STR,  ip,               OVR_IP),
+    FLD("mac",              FT_STR,  mac,              OVR_MAC),
+    FLD("ssid",             FT_STR,  ssid,             OVR_SSID),
+    FLD("free_heap_kb",     FT_U32,  free_heap_kb,     OVR_FREE_HEAP),
+    FLD("flash_size_mb",    FT_U32,  flash_size_mb,    OVR_FLASH_SIZE),
+    FLD("uptime_sec",       FT_U32,  uptime_sec,       OVR_UPTIME),
+    FLD("chip_model",       FT_STR,  chip_model,       OVR_CHIP_MODEL),
+    FLD("cpu_cores",        FT_U8,   cpu_cores,        OVR_CPU_CORES),
+    FLD("idf_ver",          FT_STR,  idf_ver,          OVR_IDF_VER),
+    FLD("app_ver",          FT_STR,  app_ver,          OVR_APP_VER),
+
+    // ---- 配网页 ----
+    FLD("ap_ssid",          FT_STR,  ap_ssid,          OVR_AP_SSID),
+    FLD("ap_ip",            FT_STR,  ap_ip,            OVR_AP_IP),
+    FLD("ap_active",        FT_BOOL, ap_active,        OVR_AP_ACTIVE),
+    FLD("setup_dismissed",  FT_BOOL, setup_dismissed,  OVR_SETUP_DISMISS),
+
+    // ---- SD 卡 / Flash 用量 ----
+    FLD("sd_mounted",       FT_BOOL, sd_mounted,       OVR_SD_MOUNTED),
+    FLD("sd_total_mb",      FT_U32,  sd_total_mb,      OVR_SD_TOTAL),
+    FLD("sd_used_mb",       FT_U32,  sd_used_mb,       OVR_SD_USED),
+    FLD("flash_used_kb",    FT_U32,  flash_used_kb,    OVR_FLASH_USED),
+    FLD("flash_free_kb",    FT_U32,  flash_free_kb,    OVR_FLASH_FREE),
+};
+
+#undef FLD
+
+#define FIELD_COUNT (sizeof(FIELDS) / sizeof(FIELDS[0]))
+
+static const field_desc_t *field_find(const char *name)
+{
+    for (size_t i = 0; i < FIELD_COUNT; i++)
+        if (strcmp(FIELDS[i].name, name) == 0) return &FIELDS[i];
+    return NULL;
+}
+
+// 把 ui_model 里该字段的地址算出来
+static void *field_ptr(const field_desc_t *d)
+{
+    return (char *)ui_model_get() + d->offset;
+}
+
+// 布尔字面量：1 / true / on / yes 均为真
+static bool parse_bool(const char *v)
+{
+    return strcmp(v, "1") == 0 || strcmp(v, "true") == 0 ||
+           strcmp(v, "on") == 0 || strcmp(v, "yes") == 0;
+}
+
+// 写字段。val 为原始字符串（FT_STR 时可含空格）。
+static void field_write(const field_desc_t *d, const char *val)
+{
+    void *p = field_ptr(d);
+    switch (d->type) {
+    case FT_F32:  *(float *)p    = (float)atof(val);      break;
+    case FT_I32:  *(int *)p      = atoi(val);             break;
+    case FT_I8:   *(int8_t *)p   = (int8_t)atoi(val);     break;
+    case FT_U8:   *(uint8_t *)p  = (uint8_t)atoi(val);    break;
+    case FT_U32:  *(uint32_t *)p = (uint32_t)strtoul(val, NULL, 10); break;
+    case FT_BOOL: *(bool *)p     = parse_bool(val);       break;
+    case FT_STR:
+        // 截断到数组容量，且保证结尾 0。注意 ui_model 的中文字段
+        // （wind_dir 等）按字节截断可能断在汉字中间 —— 容量已按最长
+        // 中文值给足（见 ui_model.h 注释），正常输入不会触发。
+        snprintf((char *)p, d->size, "%s", val);
+        break;
+    }
+}
+
+// 读字段到 out（人可读文本，与 set 接受的格式一致 → 可回灌）。
+static void field_read(const field_desc_t *d, char *out, size_t outlen)
+{
+    const void *p = field_ptr(d);
+    switch (d->type) {
+    case FT_F32:  snprintf(out, outlen, "%g", (double)*(const float *)p); break;
+    case FT_I32:  snprintf(out, outlen, "%d", *(const int *)p);           break;
+    case FT_I8:   snprintf(out, outlen, "%d", (int)*(const int8_t *)p);   break;
+    case FT_U8:   snprintf(out, outlen, "%u", (unsigned)*(const uint8_t *)p); break;
+    case FT_U32:  snprintf(out, outlen, "%u", (unsigned)*(const uint32_t *)p); break;
+    case FT_BOOL: snprintf(out, outlen, "%s", *(const bool *)p ? "true" : "false"); break;
+    case FT_STR:  snprintf(out, outlen, "%s", (const char *)p);           break;
+    }
+}
 
 // ---- 响应输出辅助 ------------------------------------------------
 static void send_line(SOCKET fd, const char *prefix, const char *body)
@@ -136,6 +261,13 @@ static void send_line(SOCKET fd, const char *prefix, const char *body)
     char buf[512];
     int n = snprintf(buf, sizeof(buf), "%s %s\n", prefix, body);
     if (n > 0) send(fd, buf, n, 0);
+}
+
+// 帧结束标记：一个空行。客户端读到空行即知本条命令的响应已完整，
+// 不必再靠 recv 超时来判断结束（dump 多行响应也能被正确切分）。
+static void send_frame_end(SOCKET fd)
+{
+    send(fd, "\n", 1, 0);
 }
 
 // ---- 命令执行（主线程调用） --------------------------------------
@@ -176,8 +308,38 @@ static int exec_one(const char *line, SOCKET client)
         return 0;
     }
     if (strcmp(buf, "help") == 0) {
-        REPLY("ok", "cmds: set <field> <val> | get <field> | page N | next | prev | mark MM-DD | unmark | marks CSV | events SPEC | labels SPEC | clear | ping | quit");
-        REPLY("ok", "fields: indoor_temp indoor_humi outdoor_temp weather_code weather_text city wifi_connected wifi_rssi battery_percent battery_charging feels_like outdoor_humi wind_speed wind_dir cloud pressure visibility uv temp_min temp_max sunrise sunset");
+        REPLY("ok", "cmds: set <field> <val> | get <field> | dump | ovr | page N | next | prev | mark MM-DD | unmark | marks CSV | events SPEC | labels SPEC | clear | ping | quit");
+        // 字段列表从 FIELDS[] 现算，不再手抄（旧版硬编码列表早已和实际字段脱节）
+        char list[1024] = "fields:";
+        for (size_t i = 0; i < FIELD_COUNT; i++) {
+            size_t used = strlen(list);
+            snprintf(list + used, sizeof(list) - used, " %s", FIELDS[i].name);
+        }
+        REPLY("ok", list);
+        return 0;
+    }
+
+    // ---- dump —— 一次性回全部字段，省掉 N 次串行 get ----
+    if (strcmp(buf, "dump") == 0) {
+        for (size_t i = 0; i < FIELD_COUNT; i++) {
+            char val[256], msg[320];
+            field_read(&FIELDS[i], val, sizeof(val));
+            snprintf(msg, sizeof(msg), "%s %s", FIELDS[i].name, val);
+            REPLY("val", msg);
+        }
+        return 0;
+    }
+
+    // ---- ovr —— 回当前被 override 的字段名，客户端用来标记 ----
+    if (strcmp(buf, "ovr") == 0) {
+        char list[1024] = "";
+        for (size_t i = 0; i < FIELD_COUNT; i++) {
+            if (!FIELDS[i].ovr_bit || !(s_override & FIELDS[i].ovr_bit)) continue;
+            size_t used = strlen(list);
+            snprintf(list + used, sizeof(list) - used, "%s%s",
+                     used ? " " : "", FIELDS[i].name);
+        }
+        REPLY("ok", list[0] ? list : "(none)");
         return 0;
     }
 
@@ -225,7 +387,7 @@ static int exec_one(const char *line, SOCKET client)
     if (strncmp(buf, "set ", 4) == 0) {
         char field[64] = {0};
         const char *rest = buf + 4;
-        // 取字段名（到空格为止）
+        // 取字段名（到第一个空格为止），其余整段都是值（字符串字段可含空格）
         const char *sp = strchr(rest, ' ');
         if (!sp) { REPLY("error", "usage: set <field> <value>"); return 0; }
         size_t flen = (size_t)(sp - rest);
@@ -234,72 +396,14 @@ static int exec_one(const char *line, SOCKET client)
         field[flen] = 0;
         const char *val = sp + 1;
 
-        ui_model_t *m = ui_model_get();
-        uint32_t bit = 0;
-        char msg[128];
-        bool matched = false;
+        const field_desc_t *d = field_find(field);
+        if (!d) { REPLY("error", "unknown field"); return 0; }
 
-        // 数值字段 —— 用 if/else if 链匹配字段名并写值
-        if (strcmp(field, "indoor_temp") == 0) {
-            m->indoor_temp = (float)atof(val); bit = OVR_INDOOR_TEMP; matched = true;
-        } else if (strcmp(field, "indoor_humi") == 0) {
-            m->indoor_humi = (float)atof(val); bit = OVR_INDOOR_HUMI; matched = true;
-        } else if (strcmp(field, "outdoor_temp") == 0) {
-            m->outdoor_temp = (float)atof(val); bit = OVR_OUTDOOR_TEMP; matched = true;
-        } else if (strcmp(field, "weather_code") == 0) {
-            m->weather_code = atoi(val); bit = OVR_WEATHER_CODE; matched = true;
-        } else if (strcmp(field, "weather_text") == 0) {
-            strncpy(m->weather_text, val, sizeof(m->weather_text) - 1);
-            m->weather_text[sizeof(m->weather_text) - 1] = 0; bit = OVR_WEATHER_TEXT; matched = true;
-        } else if (strcmp(field, "city") == 0) {
-            strncpy(m->city, val, sizeof(m->city) - 1);
-            m->city[sizeof(m->city) - 1] = 0; bit = OVR_CITY; matched = true;
-        } else if (strcmp(field, "wifi_connected") == 0) {
-            m->wifi_connected = (strcmp(val, "1") == 0 || strcmp(val, "true") == 0 || strcmp(val, "on") == 0);
-            bit = OVR_WIFI_CONN; matched = true;
-        } else if (strcmp(field, "wifi_rssi") == 0) {
-            m->wifi_rssi = (int8_t)atoi(val); bit = OVR_WIFI_RSSI; matched = true;
-        } else if (strcmp(field, "battery_percent") == 0) {
-            m->battery_percent = (uint8_t)atoi(val); bit = OVR_BAT_PCT; matched = true;
-        } else if (strcmp(field, "battery_charging") == 0) {
-            m->battery_charging = (strcmp(val, "1") == 0 || strcmp(val, "true") == 0 || strcmp(val, "on") == 0);
-            bit = OVR_BAT_CHG; matched = true;
-        } else if (strcmp(field, "feels_like_temp") == 0) {
-            m->feels_like_temp = (float)atof(val); bit = OVR_FEELS_LIKE; matched = true;
-        } else if (strcmp(field, "outdoor_humi") == 0) {
-            m->outdoor_humi = (float)atof(val); bit = OVR_OUTDOOR_HUMI; matched = true;
-        } else if (strcmp(field, "wind_speed") == 0) {
-            m->wind_speed_kmh = (float)atof(val); bit = OVR_WIND_SPD; matched = true;
-        } else if (strcmp(field, "wind_dir") == 0) {
-            strncpy(m->wind_dir, val, sizeof(m->wind_dir) - 1);
-            m->wind_dir[sizeof(m->wind_dir) - 1] = 0; bit = OVR_WIND_DIR; matched = true;
-        } else if (strcmp(field, "cloud") == 0) {
-            m->cloud_pct = atoi(val); bit = OVR_CLOUD; matched = true;
-        } else if (strcmp(field, "pressure") == 0) {
-            m->pressure_hpa = atoi(val); bit = OVR_PRESSURE; matched = true;
-        } else if (strcmp(field, "visibility") == 0) {
-            m->visibility_km = atoi(val); bit = OVR_VISIBILITY; matched = true;
-        } else if (strcmp(field, "uv") == 0) {
-            m->uv_index = atoi(val); bit = OVR_UV; matched = true;
-        } else if (strcmp(field, "temp_min") == 0) {
-            m->temp_min = atoi(val); bit = OVR_TEMP_MIN; matched = true;
-        } else if (strcmp(field, "temp_max") == 0) {
-            m->temp_max = atoi(val); bit = OVR_TEMP_MAX; matched = true;
-        } else if (strcmp(field, "sunrise") == 0) {
-            strncpy(m->sunrise, val, sizeof(m->sunrise) - 1);
-            m->sunrise[sizeof(m->sunrise) - 1] = 0; bit = OVR_SUNRISE; matched = true;
-        } else if (strcmp(field, "sunset") == 0) {
-            strncpy(m->sunset, val, sizeof(m->sunset) - 1);
-            m->sunset[sizeof(m->sunset) - 1] = 0; bit = OVR_SUNSET; matched = true;
-        }
-
-        if (!matched) {
-            REPLY("error", "unknown field");
-            return 0;
-        }
-
-        if (bit) s_override |= bit;
+        field_write(d, val);
+        if (d->ovr_bit) s_override |= d->ovr_bit;
         ui_pages_apply_locked();
+
+        char msg[128];
         snprintf(msg, sizeof(msg), "%s = %s", field, val);
         REPLY("ok", msg);
         return 0;
@@ -311,59 +415,14 @@ static int exec_one(const char *line, SOCKET client)
         strncpy(field, buf + 4, sizeof(field) - 1);
         field[strcspn(field, " \r\n")] = 0;
 
-        ui_model_t *m = ui_model_get();
-        char out[256] = {0};
-        bool matched = false;
+        const field_desc_t *d = field_find(field);
+        if (!d) { REPLY("error", "unknown field"); return 0; }
 
-        if (strcmp(field, "indoor_temp") == 0) {
-            snprintf(out, sizeof(out), "%g", (double)m->indoor_temp); matched = true;
-        } else if (strcmp(field, "indoor_humi") == 0) {
-            snprintf(out, sizeof(out), "%g", (double)m->indoor_humi); matched = true;
-        } else if (strcmp(field, "outdoor_temp") == 0) {
-            snprintf(out, sizeof(out), "%g", (double)m->outdoor_temp); matched = true;
-        } else if (strcmp(field, "weather_code") == 0) {
-            snprintf(out, sizeof(out), "%d", m->weather_code); matched = true;
-        } else if (strcmp(field, "weather_text") == 0) {
-            snprintf(out, sizeof(out), "%s", m->weather_text); matched = true;
-        } else if (strcmp(field, "city") == 0) {
-            snprintf(out, sizeof(out), "%s", m->city); matched = true;
-        } else if (strcmp(field, "wifi_connected") == 0) {
-            snprintf(out, sizeof(out), "%s", m->wifi_connected ? "true" : "false"); matched = true;
-        } else if (strcmp(field, "wifi_rssi") == 0) {
-            snprintf(out, sizeof(out), "%d", (int)m->wifi_rssi); matched = true;
-        } else if (strcmp(field, "battery_percent") == 0) {
-            snprintf(out, sizeof(out), "%d", (int)m->battery_percent); matched = true;
-        } else if (strcmp(field, "battery_charging") == 0) {
-            snprintf(out, sizeof(out), "%s", m->battery_charging ? "true" : "false"); matched = true;
-        } else if (strcmp(field, "feels_like_temp") == 0) {
-            snprintf(out, sizeof(out), "%g", (double)m->feels_like_temp); matched = true;
-        } else if (strcmp(field, "outdoor_humi") == 0) {
-            snprintf(out, sizeof(out), "%g", (double)m->outdoor_humi); matched = true;
-        } else if (strcmp(field, "wind_speed") == 0) {
-            snprintf(out, sizeof(out), "%g", (double)m->wind_speed_kmh); matched = true;
-        } else if (strcmp(field, "wind_dir") == 0) {
-            snprintf(out, sizeof(out), "%s", m->wind_dir); matched = true;
-        } else if (strcmp(field, "cloud") == 0) {
-            snprintf(out, sizeof(out), "%d", m->cloud_pct); matched = true;
-        } else if (strcmp(field, "pressure") == 0) {
-            snprintf(out, sizeof(out), "%d", m->pressure_hpa); matched = true;
-        } else if (strcmp(field, "visibility") == 0) {
-            snprintf(out, sizeof(out), "%d", m->visibility_km); matched = true;
-        } else if (strcmp(field, "uv") == 0) {
-            snprintf(out, sizeof(out), "%d", m->uv_index); matched = true;
-        } else if (strcmp(field, "temp_min") == 0) {
-            snprintf(out, sizeof(out), "%d", m->temp_min); matched = true;
-        } else if (strcmp(field, "temp_max") == 0) {
-            snprintf(out, sizeof(out), "%d", m->temp_max); matched = true;
-        } else if (strcmp(field, "sunrise") == 0) {
-            snprintf(out, sizeof(out), "%s", m->sunrise); matched = true;
-        } else if (strcmp(field, "sunset") == 0) {
-            snprintf(out, sizeof(out), "%s", m->sunset); matched = true;
-        }
-
-        if (!matched) { REPLY("error", "unknown field"); return 0; }
-
-        REPLY("val", out);
+        // 响应带字段名（旧格式只回裸值，客户端无法把响应对上控件）
+        char val[256], msg[320];
+        field_read(d, val, sizeof(val));
+        snprintf(msg, sizeof(msg), "%s %s", field, val);
+        REPLY("val", msg);
         return 0;
     }
 
@@ -381,6 +440,9 @@ int sim_console_drain(void)
         char *cmd = queue_pop_nb(&s_queue, &fd);
         if (!cmd) break;
         exec_one(cmd, fd);
+        // 一条命令的全部响应发完后补一个空行作为帧结束标记，
+        // 客户端据此判断读完（不必等 recv 超时）。
+        if (fd != INVALID_SOCKET) send_frame_end(fd);
         free(cmd);
         processed++;
         if (processed > 100) break;     // 防止死循环：一帧最多处理 100 条
@@ -397,28 +459,17 @@ bool sim_console_submit(const char *cmd)
 }
 
 // ---- 主线程直接设字段（启动参数用） -----------------------------
+// 只支持数值字段（--temp / --humi 这类命令行参数）；字符串字段请走 set 命令。
 bool sim_console_set_field_override(const char *field, float val)
 {
-    ui_model_t *m = ui_model_get();
-    uint32_t bit = 0;
+    const field_desc_t *d = field_find(field);
+    if (!d || d->type == FT_STR || d->type == FT_BOOL) return false;
 
-    if (strcmp(field, "indoor_temp") == 0) {
-        m->indoor_temp = val; bit = OVR_INDOOR_TEMP;
-    } else if (strcmp(field, "indoor_humi") == 0) {
-        m->indoor_humi = val; bit = OVR_INDOOR_HUMI;
-    } else if (strcmp(field, "outdoor_temp") == 0) {
-        m->outdoor_temp = val; bit = OVR_OUTDOOR_TEMP;
-    } else if (strcmp(field, "feels_like_temp") == 0) {
-        m->feels_like_temp = val; bit = OVR_FEELS_LIKE;
-    } else if (strcmp(field, "outdoor_humi") == 0) {
-        m->outdoor_humi = val; bit = OVR_OUTDOOR_HUMI;
-    } else if (strcmp(field, "wind_speed") == 0) {
-        m->wind_speed_kmh = val; bit = OVR_WIND_SPD;
-    } else {
-        return false;
-    }
+    char buf[32];
+    snprintf(buf, sizeof(buf), "%g", (double)val);
+    field_write(d, buf);
 
-    if (bit) s_override |= bit;
+    if (d->ovr_bit) s_override |= d->ovr_bit;
     ui_pages_apply_locked();
     return true;
 }

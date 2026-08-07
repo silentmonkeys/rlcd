@@ -27,19 +27,17 @@ jobs:
           target: esp32s3
           command: >
             idf.py build &&
-            idf.py merge-bin
-            --output rlcd_home_full.bin
-            0x0 bootloader/bootloader.bin
-            0x8000 partition_table/partition-table.bin
-            0x20000 rlcd_home.bin
-            0x420000 fonts.bin &&
-            ls -lh build/rlcd_home_full.bin
+            idf.py merge-bin --output rlcd_home_full.bin &&
+            ls -lh build/rlcd_home_full.bin build/rlcd_home.bin
 
-      - name: Upload merged firmware artifact
+      # 两个产物：full = 整片烧写镜像（含 bootloader/分区表/字库）；app = 仅应用分区，用于门户 OTA
+      - name: Upload firmware artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: rlcd_home_full
-          path: build/rlcd_home_full.bin
+          name: rlcd_home_bins
+          path: |
+            build/rlcd_home_full.bin
+            build/rlcd_home.bin
           if-no-files-found: error
           retention-days: 30
 
@@ -53,10 +51,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Download merged firmware
+      - name: Download firmware artifacts
         uses: actions/download-artifact@v4
         with:
-          name: rlcd_home_full
+          name: rlcd_home_bins
           path: dist
 
       - name: Prepare release assets
@@ -64,7 +62,11 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p release
+          # 整片烧写镜像（0x0 起，含 bootloader/分区表/字库）
           cp dist/rlcd_home_full.bin "release/rlcd_home_${{ github.ref_name }}_full.bin"
+          # 仅应用分区镜像（烧 0x20000，或门户网页 OTA 上传用）
+          cp dist/rlcd_home.bin "release/rlcd_home_${{ github.ref_name }}_app.bin"
+          sha256sum release/*.bin > release/SHA256SUMS.txt
           ls -lh release/
 
       - name: Publish GitHub Release
@@ -74,5 +76,6 @@ jobs:
           body_path: .github/release_notes.md
           files: |
             release/*.bin
+            release/SHA256SUMS.txt
           fail_on_unmatched_files: false
           make_latest: true

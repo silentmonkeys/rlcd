@@ -1,5 +1,11 @@
 # Name,   Type, SubType, Offset,   Size, Flags
+# 双 app 槽布局（16MB Flash）——支持门户网页上传固件做 OTA。
+# otadata 记录下次从哪个槽启动；ota_0/ota_1 轮换写入，升级失败可回滚到另一槽。
+# 注意：app 分区从 factory 改成 ota_0/ota_1 后偏移全部变了，
+# 改完必须整片重烧一次（idf.py flash），不能只 app-flash。
 nvs,      data, nvs,     ,         0x8000,
+otadata,  data, ota,     ,         0x2000,
 phy_init, data, phy,     ,         0x1000,
-factory,  app,  factory, ,         4M,
-fonts,    data, spiffs,  ,         2M,
+ota_0,    app,  ota_0,   ,         4M,
+ota_1,    app,  ota_1,   ,         4M,
+fonts,    data, spiffs,  ,         1M,

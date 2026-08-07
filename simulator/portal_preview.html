@@ -86,14 +86,25 @@ input::placeholder,textarea::placeholder{color:var(--mut)!important;opacity:.4!i
 
 /* 输入框包裹层 —— .pwbtn 是 absolute，必须有个定位祖先才不会飞到页面角上 */
 .inwrap{position:relative;display:block}
+/* 带切换按钮的输入框留出右侧空位，明文时长内容不会钻到图标下面 */
+.inwrap:has(.pwbtn) input{padding-right:40px!important}
 
-.pwbtn{position:absolute;right:0;top:0;width:36px;height:38px;
-background:none!important;border:0!important;font-size:16px;color:var(--mut);cursor:pointer;
+/* 显示/隐藏密码按钮 —— 图标用 SVG mask 画线稿眼睛，颜色跟随 currentColor，
+   不再用 👁 / • 这类 emoji（各平台字形不一、大小不可控、垂直居中也不准）。
+   .hide = 闭眼（内容隐藏中），.show = 睁眼（内容明文）。 */
+.pwbtn{position:absolute;right:0;top:0;width:38px;height:38px;
+background:none!important;border:0!important;color:var(--mut);cursor:pointer;
 display:flex;align-items:center;justify-content:center;border-radius:0 7px 7px 0;
-transition:.15s}
+padding:0;transition:color .15s,opacity .15s}
+.pwbtn::before{content:'';width:18px;height:18px;background-color:currentColor;
+-webkit-mask:var(--ico) center/18px 18px no-repeat;
+mask:var(--ico) center/18px 18px no-repeat}
+.pwbtn.hide{--ico:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24'/%3E%3Cline x1='1' y1='1' x2='23' y2='23'/%3E%3C/svg%3E")}
+.pwbtn.show{--ico:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z'/%3E%3Ccircle cx='12' cy='12' r='3'/%3E%3C/svg%3E");
+color:var(--acc)}
+.pwbtn:hover{color:var(--fg)}
+.pwbtn.show:hover{color:var(--acc)}
 .pwbtn:active{opacity:.5}
-.pwbtn.show{opacity:1;color:var(--fg)}
-.pwbtn.hide{opacity:.4}
 
 .btn{width:100%;margin-top:10px;padding:9px;font:inherit;font-weight:600;cursor:pointer;
 color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:7px}
@@ -117,6 +128,10 @@ border-top:1px solid var(--line)}
 .ap .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ap .rs{font-size:12px;color:var(--mut);font-variant-numeric:tabular-nums;flex:none}
 .ap .cur{font-size:11px;color:var(--ok);flex:none}
+/* 加密网络标识 —— 线稿挂锁，与 .pwbtn 同样用 SVG mask，不使用 emoji */
+.ap .lock{flex:none;width:13px;height:13px;background-color:var(--mut);
+-webkit-mask:var(--l) center/13px 13px no-repeat;mask:var(--l) center/13px 13px no-repeat;
+--l:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='11' width='18' height='11' rx='2'/%3E%3Cpath d='M7 11V7a5 5 0 0 1 10 0v4'/%3E%3C/svg%3E")}
 
 .list:empty::after{content:'暂无';font-size:12px;color:var(--mut)}
 .list{margin-bottom:8px}
@@ -142,6 +157,28 @@ color:var(--err);background:none;border:0;border-radius:5px;cursor:pointer}
 .calgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(100%,1fr));gap:10px}
 .calgrid .card{margin:0}
 
+/* 数据导出：两个按钮并排，窄屏自动堆叠 */
+.dlrow{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}
+.dlrow .btn{margin-top:0}
+@media(max-width:420px){.dlrow{grid-template-columns:1fr}}
+
+/* 固件上传：文件选择框与其他输入框同高同风格 */
+input[type=file]{width:100%;height:38px;padding:6px 10px;font:inherit;font-size:13px;
+color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:7px;
+cursor:pointer}
+input[type=file]::file-selector-button{margin-right:10px;padding:4px 10px;font:inherit;
+font-size:12px;color:var(--fg);background:var(--card);border:1px solid var(--line);
+border-radius:5px;cursor:pointer}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;
+background:var(--bg);padding:1px 5px;border-radius:4px}
+
+/* OTA 进度条 */
+.bar{height:6px;margin-top:10px;background:var(--bg);border:1px solid var(--line);
+border-radius:99px;overflow:hidden}
+.bar i{display:block;height:100%;width:0;background:var(--acc);
+border-radius:99px;transition:width .2s}
+.bar.done i{background:var(--ok)}.bar.bad i{background:var(--err)}
+
 #calbody.off{opacity:.45;pointer-events:none}
 
 #toast{position:fixed;left:50%;bottom:20px;transform:translate(-50%,80px);
@@ -151,7 +188,7 @@ font-size:13px;opacity:0;transition:.2s;pointer-events:none;z-index:99}
 #toast.ok{background:var(--ok)}#toast.bad{background:var(--err)}</style>
 </head><body>
 
-<header><h1>RLCD 控制台</h1><span id=hdrdot class=dot></span><span id=hdrnet>连接中…</span></header>
+<header><h1>RLCD 控制台</h1><span id=hdrdot class=dot></span><span id=hdrnet>正在连接</span></header>
 
 <nav class=tabs>
 <button class='tab active' data-t=0>状态</button>
@@ -162,15 +199,18 @@ font-size:13px;opacity:0;transition:.2s;pointer-events:none;z-index:99}
 <button class=tab data-t=5>系统</button>
 </nav>
 
-<section class='page active' id=p0><div class=grid id=stat></div>
-<p class=hint>每 5 秒自动刷新</p></section>
+<section class='page active' id=p0>
+<div class=card><div class=cardhd><b>设备状态</b>
+<button class='btn sm' id=btnstat>刷新</button></div>
+<div class=grid id=stat></div>
+<p class=hint>数据每 5 秒自动刷新。</p></div></section>
 
 <section class=page id=p1>
-<div class=card><div class=cardhd><b>公网 IP</b>
+<div class=card><div class=cardhd><b>公网 IP 信息</b>
 <button class='btn sm' id=btnpubip>刷新</button></div>
 <div class=grid id=pubip></div>
-<p class=hint id=pubiphint>数据来自 uapis.cn，每天获取一次。</p></div>
-<div class=card><div class=cardhd><b>附近的 WiFi</b>
+<p class=hint id=pubiphint>数据来源 uapis.cn，每日获取一次。</p></div>
+<div class=card><div class=cardhd><b>可用无线网络</b>
 <button class='btn sm' id=btnscan>扫描</button></div>
 <div id=scan class=scan></div></div>
 <div class=card>
@@ -179,44 +219,44 @@ font-size:13px;opacity:0;transition:.2s;pointer-events:none;z-index:99}
 <label for=f_pass>WiFi 密码</label>
 <div class=inwrap>
 <input id=f_pass type=password maxlength=64 autocomplete=new-password placeholder='••••••••'>
-<button type=button class='pwbtn hide' id=p_toggle>•</button>
+<button type=button class='pwbtn hide' id=p_toggle aria-label=显示密码></button>
 </div>
-<p class=hint>ESP32-S3 只支持 2.4GHz 频段。</p>
+<p class=hint>本设备仅支持 2.4GHz 频段的无线网络。</p>
 <button class='btn primary' id=btnnet>保存并重启</button>
 </div></section>
 
 <section class=page id=p2>
-<div class=card><div class=cardhd><b>当前读数</b>
+<div class=card><div class=cardhd><b>当前天气数据</b>
 <button class='btn sm' id=btnwx>立即刷新</button></div>
 <div class=grid id=wxnow></div></div>
 <div class=card>
-<div class=cardhd><b>城市</b>
+<div class=cardhd><b>城市与接口凭据</b>
 <button class='btn sm' id=btncity>重新定位</button></div>
-<div class=inwrap><input id=f_city maxlength=31 aria-label=城市 placeholder='北京 或城市 ID' type=text></div>
-<p class=hint>留空则每天按公网 IP 自动定位。</p>
+<div class=inwrap><input id=f_city maxlength=31 aria-label=城市 placeholder='城市名称或城市 ID' type=text></div>
+<p class=hint>留空时，设备每日依据公网 IP 自动确定所在城市。</p>
 <label for=f_host>API Host</label>
 <div class=inwrap>
 <input id=f_host type=password maxlength=63 placeholder='••••••••'>
-<button type=button class='pwbtn hide' id=h_toggle>•</button>
+<button type=button class='pwbtn hide' id=h_toggle aria-label=显示内容></button>
 </div>
 <label for=f_key>API Key</label>
 <div class=inwrap>
 <input id=f_key type=password maxlength=63 placeholder='••••••••'>
-<button type=button class='pwbtn hide' id=k_toggle>•</button>
+<button type=button class='pwbtn hide' id=k_toggle aria-label=显示内容></button>
 </div>
 <label for=f_uapi>UAPI Key</label>
 <div class=inwrap>
 <input id=f_uapi type=password maxlength=63 placeholder='uapi-…'>
-<button type=button class='pwbtn hide' id=u_toggle>•</button>
+<button type=button class='pwbtn hide' id=u_toggle aria-label=显示内容></button>
 </div>
-<p class=hint>供自动定位使用。留空则以访客配额调用。</p>
+<p class=hint>用于自动定位。留空时按访客配额调用。</p>
 <button class='btn primary' id=btnwxsave>保存设置</button>
-<p class=hint>天气配置立即生效，不需要重启。</p>
+<p class=hint>天气配置保存后立即生效，无需重启设备。</p>
 </div></section>
 
 <section class=page id=p3>
 <div class=card id=nosd hidden><b class=err>未检测到 SD 卡</b>
-<p class=hint>日历数据保存在 SD 卡上。请插入 SD 卡后刷新。</p></div>
+<p class=hint>日历数据存储于 SD 卡。请插入 SD 卡后刷新本页。</p></div>
 <div id=calbody>
 <div class=calgrid>
 <div class=card collapsed>
@@ -233,7 +273,7 @@ font-size:13px;opacity:0;transition:.2s;pointer-events:none;z-index:99}
 <div class=collapsible style="max-height:1000px">
 <div id=events class=list></div>
 <div class='add two'>
-<div class=inwrap><input type=text id=i_etext class=tx placeholder=内容文字></div>
+<div class=inwrap><input type=text id=i_etext class=tx placeholder=事项内容></div>
 <div class=inwrap><input type=date id=i_edate class=dt></div>
 <button class='btn sm bt' id=btnevt>添加</button>
 </div></div></div>
@@ -243,15 +283,15 @@ font-size:13px;opacity:0;transition:.2s;pointer-events:none;z-index:99}
 <div class=collapsible style="max-height:1000px">
 <label class=sw><input type=checkbox id=lab_on><span>启用</span></label>
 <div id=labbox hidden><div id=labels class=list></div>
-<div class=add><div class=inwrap><input type=text id=i_label placeholder=标签文字></div>
+<div class=add><div class=inwrap><input type=text id=i_label placeholder=标签内容></div>
 <button class='btn sm' id=btnlab>添加</button></div></div></div></div>
 </div>
 <button class='btn primary' id=btncal>保存日历</button>
-<p class=hint>写入 SD 卡并立即生效，不重启。</p>
+<p class=hint>保存至 SD 卡后立即生效，无需重启设备。</p>
 </div></section>
 
 <section class=page id=p4>
-<div class=card><div class=cardhd><b>环境温湿度趋势</b>
+<div class=card><div class=cardhd><b>室内温湿度趋势</b>
 <select id=range_sel class=auto>
 <option value=6>1 小时</option>
 <option value=18>3 小时</option>
@@ -261,18 +301,30 @@ font-size:13px;opacity:0;transition:.2s;pointer-events:none;z-index:99}
 </select></div>
 <div class=chartwrap style="height:260px"><canvas id=cv></canvas></div>
 </div>
-<div class=card><b>数据下载</b>
-<p class=hint>CSV 格式：时间,室内温,室内湿,室外温,室外湿,天气,城市,RSSI</p>
-<button class='btn primary' id=btndl>下载全部数据</button>
+<div class=card><b>数据导出</b>
+<p class=hint>CSV 字段：时间、室内温度、室内湿度、室外温度、室外湿度、天气、城市、信号强度。</p>
+<div class=dlrow>
+<button class=btn id=btndlview>导出当前图表数据</button>
+<button class='btn primary' id=btndl>导出完整记录</button>
+</div>
+<p class=hint id=dlhint>「当前图表数据」仅包含图表所选时间范围内的记录；「完整记录」包含 SD 卡内的全部历史数据。</p>
 </div></section>
 
 <section class=page id=p5>
 <div class=card><div class=grid id=sysinfo></div></div>
+<div class=card><b>固件升级</b>
+<p class=hint>选择编译生成的 <code>rlcd_home.bin</code> 固件文件。升级过程中请勿断电或断开网络。</p>
+<div class=inwrap><input type=file id=f_fw accept=.bin></div>
+<div id=otabox hidden><div class=bar><i id=otabar></i></div>
+<p class=hint id=otamsg>准备中</p></div>
+<button class='btn primary' id=btnota disabled>上传并升级</button>
+<p class=warn>升级完成后设备将自动重启，约 15 秒后重新上线。</p>
+</div>
 <div class=card><b>维护操作</b>
 <button class=btn id=btnreboot>重启设备</button>
-<p class=hint>约 10 秒后重新上线。</p>
+<p class=hint>设备将在约 10 秒后重新上线。</p>
 <button class='btn danger' id=btnforget>清除 WiFi 配置</button>
-<p class=warn>清除后设备重启并回到配网模式。</p>
+<p class=warn>清除后设备将重启并进入配网模式。</p>
 </div></section>
 
 <div id=toast></div>
@@ -332,6 +384,8 @@ font-size:13px;opacity:0;transition:.2s;pointer-events:none;z-index:99}
 <script>var CHART_URL="https://cdn.jsdelivr.net/npm/chart.js@4.4.8/dist/chart.umd.min.js";</script>
 <script>var LIM={marks:32,events:16,labels:16,text:31},dirty=false,curSsid='';
 var marks=[],events=[],labels=[],rawRows=null,chart=null;
+// 5 秒状态轮询的句柄 —— OTA 上传期间要停掉它（见 btnota）
+var tickTimer=null;
 function $(i){return document.getElementById(i)}
 function on(i,f){var e=$(i);if(e)e.onclick=f}
 var tt;function toast(m,k){var t=$('toast');t.textContent=m;
@@ -343,11 +397,14 @@ if(!r.ok||j.ok===false)throw new Error(j.err||('HTTP '+r.status));return j})})}
 function post(u,o){return api(u,{method:'POST',
 headers:{'Content-Type':'application/json'},body:JSON.stringify(o||{})})}
 function busy(id,b){var e=$(id);if(e)e.disabled=b}
+// 明文/密文切换：只翻 class，图标由 CSS 的 .pwbtn.show/.hide mask 画，
+// 这里不再往 textContent 塞字符（emoji 在各平台字形和字号都不受控）
 function pwbtn(btnId,inputId){
   on(btnId,function(){
-    var inp=$(inputId),btn=$(btnId);
-    if(inp.type==='password'){inp.type='text';btn.textContent='👁';btn.className='pwbtn show'}
-    else{inp.type='password';btn.textContent='•';btn.className='pwbtn hide'}
+    var inp=$(inputId),btn=$(btnId),showing=inp.type==='password';
+    inp.type=showing?'text':'password';
+    btn.className='pwbtn '+(showing?'show':'hide');
+    btn.setAttribute('aria-label',showing?'隐藏内容':'显示内容');
   })
 }
 function toggleCard(id){
@@ -366,8 +423,8 @@ function dur(s){if(s==null)return '—';var d=Math.floor(s/86400),h=Math.floor(s
 m=Math.floor(s%3600/60);return d?d+'天 '+h+'小时':(h?h+'小时 '+m+'分':m+'分')}
 function bars(r){return r>-55?'▂▄▆█':r>-68?'▂▄▆':r>-78?'▂▄':'•'}
 function badText(t){if(!t)return '内容不能为空';
-if(/[;=,\r\n]/.test(t))return '不能包含 ; = , 或换行';
-if(new Blob([t]).size>LIM.text)return '太长了（最多约 10 个汉字）';return ''}
+if(/[;=,\r\n]/.test(t))return '内容不能包含分号、等号、逗号或换行符';
+if(new Blob([t]).size>LIM.text)return '内容过长，最多约 10 个汉字';return ''}
 function mmdd(v){return v?v.slice(5):''}
 function tick(){api('/api/status').then(function(s){
   $('hdrdot').className='dot '+(s.wifi?'on':'off');
@@ -377,7 +434,7 @@ function tick(){api('/api/status').then(function(s){
   S.push({k:'WiFi',v:s.wifi?'已连接':'未连接'});S.push({k:'信号',v:s.rssi+' dBm'});
   S.push({k:'IP 地址',v:s.ip||'—'});S.push({k:'室内温度',v:s.temp!=null?s.temp.toFixed(1)+' ℃':'—'});
   S.push({k:'室内湿度',v:s.humi!=null?s.humi.toFixed(0)+' %':'—'});
-  S.push({k:'电池',v:s.batt!=null?s.batt+'%'+(s.charging?' ⚡':''):'—'});
+  S.push({k:'电池',v:s.batt!=null?s.batt+'%'+(s.charging?'（充电中）':''):'—'});
   S.push({k:'室外',v:(s.otemp!=null?s.otemp.toFixed(1)+' ℃':'—')+(s.wtext?' '+s.wtext:'')});
   S.push({k:'天气更新',v:s.wupd||'尚未获取'});S.push({k:'SD 卡',v:s.sd?(s.sd_used+' / '+s.sd_total+' MB'):'未插入'});
   S.push({k:'运行时长',v:dur(s.uptime)});
@@ -441,9 +498,9 @@ function parseCsvStream(text){
       else if(line[j]==','&&!q){cols.push(s);s=''}
       else s+=line[j];
     }cols.push(s);if(cols.length>=3)rows.push({
-      t:cols[0],it:parseFloat(cols[1]),ih:parseFloat(cols[2])
+      t:cols[0],it:parseFloat(cols[1]),ih:parseFloat(cols[2]),raw:line
     });
-  }rawRows=rows;toast('最新 '+rows.length+' 点数据','ok');drawChart();
+  }rawRows=rows;toast('已载入最新 '+rows.length+' 条记录','ok');drawChart();
 }
 
 function drawChart(){
@@ -494,7 +551,7 @@ function ensureChart(){
     var s=document.createElement('script');
     s.src=CHART_URL;
     s.onload=function(){res(window.Chart)};
-    s.onerror=function(){chartLib=null;rej(new Error('图表库加载失败'))};
+    s.onerror=function(){chartLib=null;rej(new Error('图表库加载失败，请检查网络连接'))};
     document.head.appendChild(s);
   });
   return chartLib;
@@ -503,7 +560,7 @@ function loadData(){
   return ensureChart().then(function(){
     if(rawRows)return drawChart();
     return fetch('/api/data/csv')
-      .then(function(r){if(!r.ok)throw new Error('数据获取失败');return r.text()})
+      .then(function(r){if(!r.ok)throw new Error('数据获取失败，请稍后重试');return r.text()})
       .then(function(t){parseCsvStream(t)});
   }).catch(function(e){toast(e.message,'bad')});
 }
@@ -523,51 +580,60 @@ document.addEventListener('DOMContentLoaded', function(){
     document.querySelectorAll('.page').forEach(function(x,i){
       x.classList.toggle('active',''+i==n)});if(n==4)setTimeout(loadData,100);
   }});
-  on('btnscan',function(){var b=$('scan');b.innerHTML='<div class=msg>扫描中…</div>';
+  on('btnstat',function(){busy('btnstat',true);
+    tick();loadPubip();setTimeout(function(){busy('btnstat',false)},600)});
+  on('btnscan',function(){var b=$('scan');b.innerHTML='<div class=msg>正在扫描</div>';
   busy('btnscan',true);api('/api/scan').then(function(j){var l=j.aps||[];
-    if(!l.length){b.innerHTML='<div class=msg>未发现 2.4GHz 网络</div>';return}
+    if(!l.length){b.innerHTML='<div class=msg>未发现可用的 2.4GHz 网络</div>';return}
     b.innerHTML=l.map(function(a){return '<button type=button class=ap data-s='+
       esc(a.ssid).replace(/'/g,'&#39;')+'>'+
-      '<span class=nm>'+(a.auth?'🔒 ':'')+esc(a.ssid)+'</span>'+
+      '<span class=nm>'+esc(a.ssid)+'</span>'+
+      (a.auth?'<span class=lock title=加密网络></span>':'')+
       (a.ssid==curSsid?'<span class=cur>当前</span>':'')+
       '<span class=rs>'+bars(a.rssi)+' '+a.rssi+'</span></button>'}).join('');
     b.querySelectorAll('.ap').forEach(function(e){e.onclick=function(){
-      $('f_ssid').value=e.dataset.s;toast('已选择 '+e.dataset.s)}})
+      $('f_ssid').value=e.dataset.s;toast('已选择网络 '+e.dataset.s)}})
   }).catch(function(e){b.innerHTML='<div class=msg err>扫描失败：'+esc(e.message)+'</div>'})
   .then(function(){busy('btnscan',false)})});
-  on('btnnet',function(){var s=$('f_ssid').value.trim();if(!s){toast('请填写 WiFi 名称','bad');return}
-    if(!confirm('保存后设备会立即重启并尝试连接 '+s+'。继续？'))return;busy('btnnet',true);
+  on('btnnet',function(){var s=$('f_ssid').value.trim();if(!s){toast('请输入 WiFi 名称','bad');return}
+    if(!confirm('保存后设备将立即重启并连接网络 '+s+'。是否继续？'))return;busy('btnnet',true);
     post('/api/config',{ssid:s,pass:$('f_pass').value}).then(function(){
-      document.body.innerHTML='<div class=msg style=padding:60px>已保存，设备正在重启…</div>'
+      document.body.innerHTML='<div class=msg style=padding:60px>配置已保存，设备正在重启。</div>'
     }).catch(function(e){toast(e.message,'bad');busy('btnnet',false)})});
   on('btnwxsave',function(){busy('btnwxsave',true);
-    post('/api/config',{city:$('f_city').value.trim(),host:$('f_host').value,
-apikey:$('f_key').value,uapikey:$('f_uapi').value.trim()}).then(function(){
+    // host/apikey/uapikey 是掩码字段（后端只回 has_* 布尔），留空即"不修改"：
+    // **不能把空串发上去** —— 后端拿空串覆盖会把 Host/Key 清掉，天气就此不再更新。
+    // 城市相反：空串是有效值（= 按公网 IP 自动定位），所以无条件带上。
+    var body={city:$('f_city').value.trim()};
+    if($('f_host').value)body.host=$('f_host').value;
+    if($('f_key').value)body.apikey=$('f_key').value;
+    if($('f_uapi').value.trim())body.uapikey=$('f_uapi').value.trim();
+    post('/api/config',body).then(function(){
       $('f_key').value='';$('f_host').value='';$('f_uapi').value='';
-      toast('已保存，正在刷新天气','ok');
+      toast('配置已保存，正在刷新天气数据','ok');
       return post('/api/weather_refresh')}).catch(function(e){toast(e.message,'bad')})
     .then(function(){busy('btnwxsave',false);setTimeout(function(){tick();loadPubip()},3000)})});
   on('btnwx',function(){busy('btnwx',true);post('/api/weather_refresh')
-    .then(function(){toast('已触发刷新','ok');setTimeout(tick,3000)})
+    .then(function(){toast('已触发天气刷新','ok');setTimeout(tick,3000)})
     .catch(function(e){toast(e.message,'bad')}).then(function(){busy('btnwx',false)})});
   // 重新定位：仅在城市留空时后端才受理（否则回 409，手填城市优先）
   on('btncity',function(){
-    if($('f_city').value.trim()){toast('请先清空城市再重新定位','bad');return}
+    if($('f_city').value.trim()){toast('请先清空城市字段，再执行重新定位','bad');return}
     busy('btncity',true);post('/api/city_refresh')
-    .then(function(){toast('正在定位','ok');
+    .then(function(){toast('正在定位，请稍候','ok');
       setTimeout(function(){tick();loadPubip()},5000)})
     .catch(function(e){toast(e.message,'bad')}).then(function(){busy('btncity',false)})});
   // 公网 IP 卡片的刷新：读设备缓存（一天一次的拉取结果），不额外消耗 API 配额
   on('btnpubip',function(){busy('btnpubip',true);
     loadPubip().then(function(){busy('btnpubip',false)})});
   on('btnmark',function(){var v=mmdd($('i_mark').value);if(!v){toast('请先选择日期','bad');return}
-    if(marks.indexOf(v)>=0){toast('该日期已在列表中','bad');return}
+    if(marks.indexOf(v)>=0){toast('该日期已存在于列表中','bad');return}
     marks.push(v);marks.sort();$('i_mark').value='';dirty=true;render()});
   on('btnevt',function(){var d=mmdd($('i_edate').value),t=$('i_etext').value.trim();
     if(!d){toast('请先选择日期','bad');return}var e=badText(t);if(e){toast(e,'bad');return}
     for(var i=0;i<events.length;i++)if(events[i].date==d){events[i].text=t;
       $('i_edate').value='';$('i_etext').value='';dirty=true;render();
-      toast('已更新 '+d+' 的预定');return}
+      toast('已更新 '+d+' 的事项内容');return}
     events.push({date:d,text:t});events.sort(function(a,b){return a.date<b.date?-1:1});
     $('i_edate').value='';$('i_etext').value='';dirty=true;render()});
   on('btnlab',function(){var t=$('i_label').value.trim();var e=badText(t);if(e){toast(e,'bad');return}
@@ -576,19 +642,109 @@ apikey:$('f_key').value,uapikey:$('f_uapi').value.trim()}).then(function(){
   $('lab_on').onchange=function(){$('labbox').hidden=!this.checked;dirty=true};
   on('btncal',function(){busy('btncal',true);
     post('/api/calendar',{marks:marks,events:events,labels:$('lab_on').checked?labels:[]})
-    .then(function(){dirty=false;toast('已写入 SD 卡','ok')})
+    .then(function(){dirty=false;toast('日历已保存至 SD 卡','ok')})
     .catch(function(e){toast(e.message,'bad')}).then(function(){busy('btncal',false)})});
   $('range_sel').onchange=drawChart;
-  on('btndl',function(){busy('btndl',true);fetch('/api/data/csv')
-    .then(function(r){if(!r.ok)throw new Error('下载失败');return r.blob()})
-    .then(function(b){var a=document.createElement('a');a.href=URL.createObjectURL(b);
-      a.download='rlcd_weather_'+(new Date().toISOString().slice(0,10))+'.csv';
-      a.click();toast('下载完成','ok')})
-    .catch(function(e){toast(e.message,'bad')}).then(function(){busy('btndl',false)})});
-  on('btnreboot',function(){if(!confirm('确定要重启设备？'))return;
-    post('/api/reboot').catch(function(){});toast('正在重启…')});
-  on('btnforget',function(){if(!confirm('将清除已保存的 WiFi 配置并重启，确定？'))return;
-    post('/api/forget').catch(function(){});toast('已清除，正在重启…')});
+  // ---- 数据导出：两种范围 ------------------------------------------
+  // CSV 表头与设备侧 user_app.c 的 CSV_HEADER 保持一致。
+  var CSV_HEAD='timestamp,indoor_temp,indoor_humi,outdoor_temp,outdoor_humi,weather,city,wifi_rssi';
+  function fsize(n){return n>=1048576?(n/1048576).toFixed(1)+' MB'
+    :Math.max(1,Math.round(n/1024))+' KB'}
+  function saveBlob(b,tag){
+    if(!b.size)throw new Error('导出内容为空');
+    var u=URL.createObjectURL(b),a=document.createElement('a');a.href=u;
+    a.download='rlcd_'+tag+'_'+(new Date().toISOString().slice(0,10))+'.csv';
+    document.body.appendChild(a);a.click();a.remove();
+    setTimeout(function(){URL.revokeObjectURL(u)},10000);
+    toast('已导出 '+fsize(b.size),'ok');
+  }
+  // 图表数据：直接用已在内存里的行（含原始 CSV 文本），不再请求设备，
+  // 导出范围与图表当前所选时间范围严格一致。
+  on('btndlview',function(){
+    if(!rawRows||!rawRows.length){toast('图表数据尚未载入，请稍后重试','bad');return}
+    var n=parseInt($('range_sel').value,10);
+    var d=rawRows.slice(-Math.min(rawRows.length,n));
+    try{
+      saveBlob(new Blob([CSV_HEAD+'\n'+d.map(function(x){return x.raw}).join('\n')+'\n'],
+        {type:'text/csv;charset=utf-8'}),'chart');
+    }catch(e){toast(e.message,'bad')}
+  });
+  // 完整记录：走 ?full=1。不带该参数拿到的是图表用的最新若干行（约 3.5 天），
+  // 作为存档会遗漏更早的数据。
+  //
+  // 全量导出可能持续几秒到几十秒（一年数据约 3.6MB，从 SD 卡边读边发）。设备侧
+  // httpd 是**单任务串行**的，这条请求全程独占它，所以先停掉 5 秒状态轮询 ——
+  // 否则那些 /api/status 只会堆在 backlog 里（backlog_conn=5），导出结束后一次性
+  // 涌入，还可能挤掉连接（max_open_sockets=7 且 lru_purge_enable=false）。
+  on('btndl',function(){busy('btndl',true);toast('正在导出完整记录，请稍候');
+    if(tickTimer){clearInterval(tickTimer);tickTimer=null}
+    fetch('/api/data/csv?full=1')
+    .then(function(r){if(!r.ok)throw new Error('导出失败（HTTP '+r.status+'）');return r.blob()})
+    .then(function(b){saveBlob(b,'full')})
+    .catch(function(e){toast(e.message,'bad')}).then(function(){
+      busy('btndl',false);
+      if(!tickTimer){tick();tickTimer=setInterval(tick,5000)}
+    })});
+  // ---- 固件升级（OTA） ---------------------------------------------
+  // 用 XHR 而不是 fetch：只有 XHR 能报告**上传**进度（fetch 的 ReadableStream
+  // 上传在多数浏览器仍不可用）。固件以 raw body 发送，设备边收边写 Flash。
+  $('f_fw').onchange=function(){
+    var f=this.files&&this.files[0];
+    busy('btnota',!f);
+    if(f)$('otamsg').textContent='待上传文件：'+f.name+'（'+fsize(f.size)+'）';
+    $('otabox').hidden=!f;
+    $('otabar').style.width='0';$('otabar').parentNode.className='bar';
+  };
+  on('btnota',function(){
+    var f=$('f_fw').files&&$('f_fw').files[0];
+    if(!f){toast('请先选择固件文件','bad');return}
+    if(!/\.bin$/i.test(f.name)){toast('固件文件应为 .bin 格式','bad');return}
+    if(!confirm('将向设备写入固件 '+f.name+'，完成后设备自动重启。是否继续？'))return;
+    busy('btnota',true);$('f_fw').disabled=true;$('otabox').hidden=false;
+    var bar=$('otabar'),wrap=bar.parentNode,msg=$('otamsg');
+    wrap.className='bar';bar.style.width='0';msg.textContent='正在上传 0%';
+    // 上传期间停掉 5 秒状态轮询：设备侧 httpd 是**单任务串行**处理，ota_post
+    // 全程独占它，这些请求只会堆在 backlog 里（backlog_conn=5），上传结束后
+    // 一次性涌入。同理，上传中也**无法**去查设备侧写入进度 —— 那个请求同样
+    // 排不上队（这就是 /api/ota_status 被删掉的原因）。
+    if(tickTimer){clearInterval(tickTimer);tickTimer=null}
+    function resumeTick(){if(!tickTimer)tickTimer=setInterval(tick,5000)}
+    var x=new XMLHttpRequest();
+    x.open('POST','/api/ota',true);
+    x.setRequestHeader('Content-Type','application/octet-stream');
+    x.timeout=300000;   // 大固件 + 弱信号，给足 5 分钟
+    x.upload.onprogress=function(e){
+      if(!e.lengthComputable)return;
+      var p=Math.round(e.loaded*100/e.total);
+      bar.style.width=p+'%';
+      // 到 100% 只代表**发完了**（socket 缓冲会让它提前到达），设备还在写
+      // 最后几块 + 校验 SHA256 + 切分区，这段时间没有进度可查，只能给文案。
+      msg.textContent=p<100?'正在上传 '+p+'%':'上传完成，设备正在校验并写入，请勿断电';
+    };
+    function fail(m){resumeTick();
+      wrap.className='bar bad';msg.textContent=m;
+      toast(m,'bad');busy('btnota',false);$('f_fw').disabled=false}
+    x.onload=function(){
+      var j={};try{j=JSON.parse(x.responseText)}catch(e){}
+      if(x.status===200&&j.ok!==false){
+        wrap.className='bar done';bar.style.width='100%';
+        msg.textContent='升级成功，设备正在重启。请稍后刷新本页。';
+        toast('升级成功，设备正在重启','ok');
+        // 设备重启期间轮询 /api/status，恢复后自动刷新页面。
+        // 不恢复 tickTimer —— 页面马上就要 reload 了。
+        setTimeout(function(){var t=setInterval(function(){
+          api('/api/status').then(function(){clearInterval(t);location.reload()})
+          .catch(function(){})},3000)},8000);
+      }else fail(j.err||('升级失败（HTTP '+x.status+'）'));
+    };
+    x.onerror=function(){fail('上传中断，请检查网络连接后重试')};
+    x.ontimeout=function(){fail('上传超时，请检查网络连接后重试')};
+    x.send(f);
+  });
+  on('btnreboot',function(){if(!confirm('确认重启设备？'))return;
+    post('/api/reboot').catch(function(){});toast('设备正在重启')});
+  on('btnforget',function(){if(!confirm('将清除已保存的 WiFi 配置并重启设备，是否继续？'))return;
+    post('/api/forget').catch(function(){});toast('配置已清除，设备正在重启')});
   api('/api/limits').then(function(l){LIM=l;render()}).catch(function(){render()});
   api('/api/calendar').then(function(c){marks=c.marks||[];events=c.events||[];labels=c.labels||[];
     $('lab_on').checked=labels.length>0;$('labbox').hidden=!labels.length;render()}).catch(function(){render()});
@@ -599,7 +755,7 @@ apikey:$('f_key').value,uapikey:$('f_uapi').value.trim()}).then(function(){
     $('f_host').placeholder=c.has_host?'••••••••':'xxx.re.qweatherapi.com';
     $('f_uapi').placeholder=c.has_uapi?'••••••••':'uapi-…';
   }).catch(function(){});
-  tick();setInterval(tick,5000);
+  tick();tickTimer=setInterval(tick,5000);
   loadPubip();
   setTimeout(function(){var obs=new IntersectionObserver(function(es){es.forEach(function(e){
     if(e.isIntersecting&&!rawRows){obs.disconnect();loadData();}

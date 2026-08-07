@@ -2,6 +2,7 @@
 //
 // 通道 ADC1_CH3（GPIO4）、12dB 衰减（量程 ~0..3.1V）、12bit。板上电池经分压
 // 接入，采到的电压需 ×3 还原实际电池电压。用 curve-fitting 校准提升精度。
+// 单次读数噪声在分压还原后可达 ±20mV，因此读电压时取 8 次均值（见下方注释）。
 
 #include "adc_bsp.h"
 
@@ -59,25 +60,41 @@ esp_err_t Adc_PortInit(void)
     return ESP_OK;
 }
 
+// 均值滤波：ESP32-S3 ADC 单次读数噪声可达 ±20mV（分压还原后 ×3 更明显），
+// 而充电趋势判据阈值只有 20mV —— 不滤波会导致电量百分比跳变、充电态误报。
+// 取 8 次（2^3，右移即可）算术平均：8 次 oneshot ≈ 0.2ms，5s 一次的调用频率
+// 完全不敏感。任何一次读失败就整体放弃（返回 0 = "不可用"），不用半套数据。
+#define BAT_SAMPLE_N      8
+#define BAT_SAMPLE_SHIFT  3
+
 float Adc_GetBatteryVoltage(void)
 {
     if (!s_inited) return 0.0f;
 
-    int raw = 0;
-    if (adc_oneshot_read(s_adc, BAT_ADC_CHANNEL, &raw) != ESP_OK) return 0.0f;
+    int sum = 0;
+    for (int i = 0; i < BAT_SAMPLE_N; i++) {
+        int raw = 0;
+        if (adc_oneshot_read(s_adc, BAT_ADC_CHANNEL, &raw) != ESP_OK) return 0.0f;
+        sum += raw;
+    }
+    int raw_avg = sum >> BAT_SAMPLE_SHIFT;
 
     int mv = 0;
-    if (s_cali && adc_cali_raw_to_voltage(s_cali, raw, &mv) == ESP_OK) {
+    if (s_cali && adc_cali_raw_to_voltage(s_cali, raw_avg, &mv) == ESP_OK) {
         return 0.001f * (float)mv * BAT_DIVIDER;
     }
     // 无校准兜底：12bit / 12dB 满量程约 3.1V
-    return (raw / 4095.0f) * 3.1f * BAT_DIVIDER;
+    return (raw_avg / 4095.0f) * 3.1f * BAT_DIVIDER;
+}
+
+uint8_t Adc_LevelFromVoltage(float vol)
+{
+    if (vol <= 3.0f)  return 0;
+    if (vol >= 4.12f) return 100;
+    return (uint8_t)(((vol - 3.0f) / 1.12f) * 100.0f);
 }
 
 uint8_t Adc_GetBatteryLevel(void)
 {
-    float vol = Adc_GetBatteryVoltage();
-    if (vol <= 3.0f)  return 0;
-    if (vol >= 4.12f) return 100;
-    return (uint8_t)(((vol - 3.0f) / 1.12f) * 100.0f);
+    return Adc_LevelFromVoltage(Adc_GetBatteryVoltage());
 }

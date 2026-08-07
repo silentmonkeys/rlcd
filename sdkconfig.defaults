@@ -49,5 +49,16 @@ CONFIG_LOG_COLORS=n
 
 # 字库放在 SPIFFS fonts 分区，运行时 lv_binfont_create 走 POSIX FS 驱动读文件
 # 盘符用 'A'，路径为 "A:/spiffs/ui_font_cjk_16.bin"
+# 注意 LV_FS_POSIX_LETTER 在 Kconfig 里是 **int**，必须写 ASCII 码 65 而不是 'A'
+# —— 写 'A' 会被 kconfig 判为非法值静默忽略，回落 default 0，
+# 编译期直接 #error "Invalid drive letter"。
 CONFIG_LV_USE_FS_POSIX=y
-CONFIG_LV_FS_POSIX_LETTER='A'
+CONFIG_LV_FS_POSIX_LETTER=65
+
+# OTA 回滚安全网 —— 门户网页上传固件（net_ota.c）必备。
+# 新固件被 set_boot_partition 后首次启动处于 PENDING_VERIFY 状态：
+# 只有跑到 esp_ota_mark_app_valid_cancel_rollback() 才算"确认可用"；
+# 在那之前若 panic/看门狗重启，bootloader 自动回滚到上一个槽。
+# 确认点在 user_app.c 的 5s 慢节拍（连续跑满 60s 才 mark），
+# 保证不是"刚 app_main 完就 mark"那种假确认。
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y

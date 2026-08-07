@@ -16,6 +16,8 @@
 //   GET  /api/pubip          最近一次 UAPI 定位结果（公网 IP / 归属地 / 运营商）
 //   POST /api/reboot         重启
 //   POST /api/forget         清 WiFi 凭据并重启
+//   GET  /api/data/csv       CSV 数据（默认最新若干行；?full=1 为完整文件）
+//   POST /api/ota            上传固件做 OTA（见 net_ota.c），成功后自动重启
 //   404 → 302 /              让手机的 Captive Portal 探测自动弹出本页
 //
 // 请求/响应统一 JSON。相比旧版的 x-www-form-urlencoded：
@@ -50,6 +52,8 @@
 #include <esp_http_server.h>
 #include <esp_system.h>
 #include <esp_log.h>
+#include <esp_timer.h>
+#include <esp_ota_ops.h>
 #include <nvs.h>
 
 #define BODY_MAX        8192    // POST body 上限（超出回 413，不再截断）
@@ -116,6 +120,15 @@ static void jw_kv_f(jw_t *w, const char *k, float v, int dec)
     jw_key(w, k);
     if (isnan(v) || isinf(v)) jw_fmt(w, "null");
     else                      jw_fmt(w, "%.*f", dec, (double) v);
+}
+
+// 整型 + 哨兵：v <= na 视为"无数据"写 null（前端 `!=null` 判断后显示 "—"）。
+// 否则 UI_TEMP_NA(-999) / UI_INT_NA(-1) 会被当成真实数值渲染出来。
+static void jw_kv_int_na(jw_t *w, const char *k, long v, long na)
+{
+    jw_key(w, k);
+    if (v <= na) jw_fmt(w, "null");
+    else         jw_fmt(w, "%ld", v);
 }
 
 // 逗号分隔的元素前缀（数组内用）
@@ -291,7 +304,8 @@ static esp_err_t send_json(httpd_req_t *req, const char *status, const char *bod
 }
 
 // 错误回执：{"ok":false,"err":"中文原因"} —— 前端直接 toast 出来
-static esp_err_t send_err(httpd_req_t *req, const char *status, const char *msg)
+// 非 static：net_ota.c 复用同一套回执格式（声明在 net_internal.h）
+esp_err_t send_err(httpd_req_t *req, const char *status, const char *msg)
 {
     char buf[256];
     jw_t w = { buf, sizeof(buf), 0, false };
@@ -303,7 +317,7 @@ static esp_err_t send_err(httpd_req_t *req, const char *status, const char *msg)
     return send_json(req, status, buf);
 }
 
-static esp_err_t send_ok(httpd_req_t *req)
+esp_err_t send_ok(httpd_req_t *req)
 {
     return send_json(req, "200 OK", "{\"ok\":true}");
 }
@@ -436,12 +450,16 @@ static esp_err_t status_get(httpd_req_t *req)
     jw_kv_f   (&w, "otemp", m->outdoor_temp, 1);
     jw_kv_f   (&w, "ohumi", m->outdoor_humi, 0);
     jw_kv_f   (&w, "feels", m->feels_like_temp, 1);
-    jw_kv_int (&w, "tmin",  m->temp_min);
-    jw_kv_int (&w, "tmax",  m->temp_max);
+    jw_kv_int_na(&w, "tmin", m->temp_min, UI_TEMP_NA);
+    jw_kv_int_na(&w, "tmax", m->temp_max, UI_TEMP_NA);
     {
+        // 风向、风速各自可能缺失：风速为 NaN 时只写风向，别渲染成 "东风 nan km/h"
         char wind[32];
-        if (m->wind_dir[0]) snprintf(wind, sizeof(wind), "%s %.0f km/h", m->wind_dir, (double) m->wind_speed_kmh);
-        else                wind[0] = 0;
+        wind[0] = 0;
+        if (m->wind_dir[0] && !isnan(m->wind_speed_kmh))
+            snprintf(wind, sizeof(wind), "%s %.0f km/h", m->wind_dir, (double) m->wind_speed_kmh);
+        else if (m->wind_dir[0])
+            snprintf(wind, sizeof(wind), "%s", m->wind_dir);
         jw_kv_str(&w, "wind", wind);
     }
     // SD
@@ -533,16 +551,21 @@ static esp_err_t config_post(httpd_req_t *req)
     }
     // --- 城市：**允许清空** —— 空 = 自动定位（UAPI 取公网 IP 的 district） ---
     if (!opt_str(body, "city", v, sizeof(c.city), &has)) {
-        free(body); return send_err(req, "400 Bad Request", "城市名过长（最多 31 字节，约 10 个汉字）");
+        free(body); return send_err(req, "400 Bad Request", "城市名称过长（最多 31 字节，约 10 个汉字）");
     }
     if (has && strcmp(c.city, v) != 0) {
         strcpy(c.city, v); wx_changed = true; city_changed = true;
     }
-    // --- API Host ---
+    // --- API Host：留空 = 不修改 ---
+    // 前端 f_host 和 apikey 一样是掩码字段（只回 has_host 布尔，不回明文），只改城市时
+    // 提交的就是空串。这里若不挡住空串，一次"只改城市"的保存会把 Host 清成空，
+    // weather_task 开头的 `!s_cfg.weather_host[0]` 直接跳过 —— 天气就再也不更新了。
     if (!opt_str(body, "host", v, sizeof(c.weather_host), &has)) {
         free(body); return send_err(req, "400 Bad Request", "API Host 过长（最多 63 字节）");
     }
-    if (has && strcmp(c.weather_host, v) != 0) { strcpy(c.weather_host, v); wx_changed = true; }
+    if (has && v[0] && strcmp(c.weather_host, v) != 0) {
+        strcpy(c.weather_host, v); wx_changed = true;
+    }
     // --- API Key：留空 = 不修改 ---
     if (!opt_str(body, "apikey", v, sizeof(c.weather_apikey), &has)) {
         free(body); return send_err(req, "400 Bad Request", "API Key 过长（最多 63 字节）");
@@ -557,7 +580,7 @@ static esp_err_t config_post(httpd_req_t *req)
     if (has && v[0]) {
         if (strncmp(v, "uapi-", 5) != 0) {
             free(body);
-            return send_err(req, "400 Bad Request", "UAPI Key 须以 uapi- 开头");
+            return send_err(req, "400 Bad Request", "UAPI Key 格式不正确，应以 uapi- 开头");
         }
         if (strcmp(c.uapi_key, v) != 0) { strcpy(c.uapi_key, v); wx_changed = true; }
     }
@@ -693,7 +716,7 @@ static bool valid_mmdd(const char *s)
 static const char *check_text(const char *t)
 {
     if (!t[0]) return "内容不能为空";
-    if (strpbrk(t, ";=,\r\n")) return "内容不能包含 ; = , 或换行";
+    if (strpbrk(t, ";=,\r\n")) return "内容不能包含分号、等号、逗号或换行符";
     if (strlen(t) > CAL_TEXT_LIMIT) return "内容过长";
     return NULL;
 }
@@ -726,7 +749,7 @@ static esp_err_t calendar_post(httpd_req_t *req)
         for (const char *el; (el = js_arr_next(&it)) != NULL; ) {
             char d[16];
             if (js_str(el, d, sizeof(d)) < 0 || !valid_mmdd(d)) FAIL("第 %d 个标记日期格式不正确", n + 1);
-            if (++n > UI_CAL_MAX_MARKS) FAIL("标记日期最多 %d 条，请先删除一些", UI_CAL_MAX_MARKS);
+            if (++n > UI_CAL_MAX_MARKS) FAIL("标记日期最多 %d 条，请先删除部分条目", UI_CAL_MAX_MARKS);
             if (marks[0]) strcat(marks, ",");
             strcat(marks, d);
         }
@@ -739,12 +762,12 @@ static esp_err_t calendar_post(httpd_req_t *req)
         for (const char *el; (el = js_arr_next(&it)) != NULL; ) {
             char d[16], t[UI_CAL_TEXT_MAX];
             if (js_str(js_member(el, "date"), d, sizeof(d)) < 0 || !valid_mmdd(d))
-                FAIL("第 %d 条预定的日期格式不正确", n + 1);
+                FAIL("第 %d 条事项的日期格式不正确", n + 1);
             if (js_str(js_member(el, "text"), t, sizeof(t)) < 0)
-                FAIL("第 %d 条预定的内容过长（最多 %d 字节）", n + 1, CAL_TEXT_LIMIT);
+                FAIL("第 %d 条事项的内容过长（最多 %d 字节）", n + 1, CAL_TEXT_LIMIT);
             const char *bad = check_text(t);
-            if (bad) FAIL("第 %d 条预定：%s", n + 1, bad);
-            if (++n > UI_CAL_MAX_EVENTS) FAIL("预定内容最多 %d 条，请先删除一些", UI_CAL_MAX_EVENTS);
+            if (bad) FAIL("第 %d 条事项：%s", n + 1, bad);
+            if (++n > UI_CAL_MAX_EVENTS) FAIL("事项内容最多 %d 条，请先删除部分条目", UI_CAL_MAX_EVENTS);
             if (events[0]) strcat(events, ";");
             strcat(events, d); strcat(events, "="); strcat(events, t);
         }
@@ -760,7 +783,7 @@ static esp_err_t calendar_post(httpd_req_t *req)
                 FAIL("第 %d 个标签过长（最多 %d 字节）", n + 1, CAL_TEXT_LIMIT);
             const char *bad = check_text(t);
             if (bad) FAIL("第 %d 个标签：%s", n + 1, bad);
-            if (++n > UI_CAL_MAX_LABELS) FAIL("随机标签最多 %d 条，请先删除一些", UI_CAL_MAX_LABELS);
+            if (++n > UI_CAL_MAX_LABELS) FAIL("随机标签最多 %d 条，请先删除部分条目", UI_CAL_MAX_LABELS);
             if (labels[0]) strcat(labels, ";");
             strcat(labels, t);
         }
@@ -769,7 +792,7 @@ static esp_err_t calendar_post(httpd_req_t *req)
     free(body);
 
     if (!cal_save_to_sd(marks, events, labels))
-        return send_err(req, "500 Internal Server Error", "写入 SD 卡失败（卡满或只读？）");
+        return send_err(req, "500 Internal Server Error", "写入 SD 卡失败，请检查卡片剩余空间及写保护状态");
 
     // setter 只写静态数组、不碰 LVGL，无需持锁；锁只保护 apply。
     // 锁超时也不影响：数组已更新，1s tick 会用新数据重绘。
@@ -945,11 +968,16 @@ static esp_err_t forget_post(httpd_req_t *req)
 }
 
 // =====================================================================
-// GET /api/data/csv —— 从文件尾部倒读最新 500 行数据
+// GET /api/data/csv —— 默认只回最新 500 行（给图表用）；
+// GET /api/data/csv?full=1 —— 整份文件原样回传（给"下载全部数据"用）。
+//
+// 分两种模式的原因：图表只画得下几百个点，全量下来白花 TCP 时间；而下载是
+// 要存档的，截断 500 行等于**悄悄丢数据** —— 10 分钟一行，500 行只有约 3.5 天，
+// 之前"下载的数据不全"就是这么来的（前端下载按钮复用了图表那个截断接口）。
 //
 // 定位起点用**块倒读**：每次往前读 1KB 数一遍换行符。旧实现是每字节一次
 // fseek+fgetc，500 行（约 35KB）要 3.5 万次 FATFS 调用，SD 上要好几秒。
-// 现在同样的活儿只要 ~35 次读，快两个数量级。
+// 现在同样的活儿只要 ~35 次读，快两个数量级。full=1 模式不用倒读，直接从头发。
 //
 // 缓冲全部放在**静态区**而不是任务栈：httpd 任务栈只有 8KB，原先在栈上开
 // 8KB 数组必然溢栈。发送块取 1460B = 一个 TCP MSS，比 8KB 更贴合 5760B 窗口。
@@ -958,14 +986,26 @@ static esp_err_t forget_post(httpd_req_t *req)
 #define MAX_CSV_ROWS   500
 #define CSV_SCAN_SZ    1024    // 倒着定位行首用的块
 #define CSV_SEND_SZ    1460    // 一个以太网 MSS
+#define CSV_LOG_PATH   "/sdcard/rlcd/weather_log.csv"   // 与 user_app.c 的写入路径一致
+
+// URL query 里有 full=1 / full=true 就算全量
+static bool csv_want_full(httpd_req_t *req)
+{
+    char q[64], v[8];
+    if (httpd_req_get_url_query_str(req, q, sizeof(q)) != ESP_OK) return false;
+    if (httpd_query_key_value(q, "full", v, sizeof(v)) != ESP_OK) return false;
+    return v[0] == '1' || v[0] == 't' || v[0] == 'y';
+}
 
 static esp_err_t csv_get(httpd_req_t *req)
 {
     const ui_model_t *m = ui_model_get();
     if (!m->sd_mounted)
-        return send_err(req, "409 Conflict", "SD 卡未挂载，暂无数据");
+        return send_err(req, "409 Conflict", "SD 卡未挂载，无可用数据");
 
-    FILE *f = fopen("/sdcard/rlcd/weather_log.csv", "rb");
+    const bool full = csv_want_full(req);
+
+    FILE *f = fopen(CSV_LOG_PATH, "rb");
     if (!f) return send_err(req, "404 Not Found", "暂无数据");
 
     static char scan[CSV_SCAN_SZ];
@@ -974,18 +1014,23 @@ static esp_err_t csv_get(httpd_req_t *req)
     long size = ftell(f);
     if (size < 0) { fclose(f); return send_err(req, "500 Internal Server Error", "读取失败"); }
 
-    // 从尾部往前，一块一块数换行符，数到第 MAX_CSV_ROWS 个就是起点
-    long pos = size;
+    // 全量模式：pos 停在 0，整份文件（含原始表头）原样发出，不做任何截断。
+    // 截断模式：从尾部往前，一块一块数换行符，数到第 MAX_CSV_ROWS 个就是起点。
+    long pos  = size;
     int  rows = 0;
-    while (pos > 0 && rows < MAX_CSV_ROWS) {
-        long chunk = (pos > CSV_SCAN_SZ) ? CSV_SCAN_SZ : pos;
-        pos -= chunk;
-        if (fseek(f, pos, SEEK_SET) != 0) break;
-        size_t got = fread(scan, 1, (size_t) chunk, f);
-        // 块内从后往前找，命中第 MAX_CSV_ROWS 个换行就把 pos 定在它之后
-        for (long i = (long) got - 1; i >= 0; i--) {
-            if (scan[i] != '\n') continue;
-            if (++rows >= MAX_CSV_ROWS) { pos += i + 1; break; }
+    if (full) {
+        pos = 0;
+    } else {
+        while (pos > 0 && rows < MAX_CSV_ROWS) {
+            long chunk = (pos > CSV_SCAN_SZ) ? CSV_SCAN_SZ : pos;
+            pos -= chunk;
+            if (fseek(f, pos, SEEK_SET) != 0) break;
+            size_t got = fread(scan, 1, (size_t) chunk, f);
+            // 块内从后往前找，命中第 MAX_CSV_ROWS 个换行就把 pos 定在它之后
+            for (long i = (long) got - 1; i >= 0; i--) {
+                if (scan[i] != '\n') continue;
+                if (++rows >= MAX_CSV_ROWS) { pos += i + 1; break; }
+            }
         }
     }
     // pos==0 表示整个文件都要发（含 header 行）；否则 pos 落在某行行首
@@ -1009,17 +1054,32 @@ static esp_err_t csv_get(httpd_req_t *req)
         if (httpd_resp_send_chunk(req, hdr, sizeof(hdr) - 1) != ESP_OK) r = ESP_FAIL;
     }
 
+    // 只发**进函数时**量到的那 (size - pos) 个字节，不是一路 fread 到 EOF。
+    //
+    // 全量导出可能要几秒到几十秒（一年数据约 3.6MB），期间 csv_log 任务完全
+    // 可能追加新行（10 分钟一次）。读到 EOF 的写法会把这些新数据也带上，
+    // 让响应长度对不上一开始的判断；更麻烦的是文件持续增长时理论上收不了尾。
+    // 锁定初始长度，导出内容 = 一个明确的时间切片。
+    long remain = size - pos;
     static char send[CSV_SEND_SZ];
-    size_t nr;
-    while (r == ESP_OK && (nr = fread(send, 1, sizeof(send), f)) > 0) {
+    const int64_t t0 = esp_timer_get_time();
+    while (r == ESP_OK && remain > 0) {
+        size_t want = (remain > (long) sizeof(send)) ? sizeof(send) : (size_t) remain;
+        size_t nr   = fread(send, 1, want, f);
+        if (nr == 0) break;   // 文件被截断/读错，能发多少算多少
         if (httpd_resp_send_chunk(req, send, nr) != ESP_OK) {
             r = ESP_FAIL;
             break;
         }
+        remain -= (long) nr;
     }
     httpd_resp_send_chunk(req, NULL, 0);
     fclose(f);
-    ESP_LOGI(NET_TAG, "csv: sent latest %d rows (from offset %ld/%ld)", rows, pos, size);
+    // 全量导出会独占 httpd 那唯一一条任务（select 循环是串行的），期间门户其它
+    // 请求排队等着。把耗时打出来，真出现"点了导出网页就卡住"时能直接对上。
+    ESP_LOGI(NET_TAG, "csv: %s (from offset %ld/%ld, rows=%d, %lld ms)",
+             full ? "sent full file" : "sent latest rows", pos, size, rows,
+             (long long) ((esp_timer_get_time() - t0) / 1000));
     return r;
 }
 
@@ -1028,7 +1088,7 @@ void config_httpd_start(void)
 {
     if (s_httpd) return;
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
-    cfg.max_uri_handlers  = 16;
+    cfg.max_uri_handlers  = 20;   // 当前 16 条，留几个余量（超了会静默注册失败）
     cfg.stack_size        = 8 * 1024;   // JSON 生成 + snprintf 需要点栈
     // scan 阻塞 ~2-3s，把发送/接收 timeout 拉长避免浏览器提前断连
     cfg.recv_wait_timeout = 10;
@@ -1051,6 +1111,7 @@ void config_httpd_start(void)
         { .uri = "/api/reboot",          .method = HTTP_POST, .handler = reboot_post },
         { .uri = "/api/forget",          .method = HTTP_POST, .handler = forget_post },
         { .uri = "/api/data/csv",        .method = HTTP_GET,  .handler = csv_get },
+        { .uri = "/api/ota",             .method = HTTP_POST, .handler = ota_post },
     };
     for (size_t i = 0; i < sizeof(routes) / sizeof(routes[0]); i++) {
         httpd_register_uri_handler(s_httpd, &routes[i]);

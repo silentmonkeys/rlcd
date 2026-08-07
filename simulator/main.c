@@ -116,17 +116,21 @@ static float s_force_humi = NAN;
 static void sim_tick_data(void)
 {
     ui_model_t *m = ui_model_get();
-    uint32_t ovr = sim_console_override_mask();
+    uint64_t ovr = sim_console_override_mask();
 
     time_t now = time(NULL);
     struct tm tm_local;
     localtime_r(&now, &tm_local);
-    m->hour = tm_local.tm_hour;
-    m->minute = tm_local.tm_min;
-    m->year = tm_local.tm_year + 1900;
-    m->month = tm_local.tm_mon + 1;
-    m->day = tm_local.tm_mday;
-    m->weekday = tm_local.tm_wday;
+    // 时间 6 个字段每帧都写 —— 必须让 override 生效，否则调试客户端设的
+    // 时间下一帧就被真实时间冲掉（测时钟渲染/特定日期的日历时用得到）。
+    if (!(ovr & OVR_TIME)) {
+        m->hour = tm_local.tm_hour;
+        m->minute = tm_local.tm_min;
+        m->year = tm_local.tm_year + 1900;
+        m->month = tm_local.tm_mon + 1;
+        m->day = tm_local.tm_mday;
+        m->weekday = tm_local.tm_wday;
+    }
 
     static float phase = 0;
     phase += 0.02f;
@@ -163,7 +167,8 @@ static void sim_tick_data(void)
     }
 
     if (!(ovr & OVR_CITY)) strcpy(m->city, "北京");
-    snprintf(m->weather_update, sizeof(m->weather_update), "%02d:%02d", m->hour, m->minute);
+    if (!(ovr & OVR_WEATHER_UPD))
+        snprintf(m->weather_update, sizeof(m->weather_update), "%02d:%02d", m->hour, m->minute);
 
     // --- 天气详情页假数据 ---
     if (!(ovr & OVR_OUTDOOR_TEMP))
@@ -197,47 +202,35 @@ static void sim_tick_data(void)
     if (!(ovr & OVR_BAT_CHG))    m->battery_charging = false;
 
     // --- 设备信息页假数据（真机由 net_bsp / esp_chip_info 填） -------
-    // 这些字段"永不自动更新"，sim_tick_data 只填一次
-    static bool s_device_filled = false;
-    if (!s_device_filled) {
-        strcpy(m->chip_model, "ESP32-S3");
-        m->cpu_cores        = 2;
-        m->flash_size_mb    = 8;
-        m->free_heap_kb     = 215;
-        strcpy(m->idf_ver,   "v6.0.1");
-        strcpy(m->app_ver,   "RLCD 0.1");
-        strcpy(m->ssid,      "MyPhone-2.4G");
-        strcpy(m->ip,        "10.217.129.06");
-        strcpy(m->mac,       "84:F7:03:6C:AA:BB");
-        s_device_filled = true;
-    }
+    // 这些字段不随时间变化，但每帧按 override 位重填 —— 这样 GUI 的
+    // 「清除 override」能让它们恢复默认值（旧版用 static 只填一次，
+    // clear 之后仍停在调试值上，看起来像 clear 失效）。
+    if (!(ovr & OVR_CHIP_MODEL)) strcpy(m->chip_model, "ESP32-S3");
+    if (!(ovr & OVR_CPU_CORES))  m->cpu_cores     = 2;
+    if (!(ovr & OVR_FLASH_SIZE)) m->flash_size_mb = 8;
+    if (!(ovr & OVR_FREE_HEAP))  m->free_heap_kb  = 215;
+    if (!(ovr & OVR_IDF_VER))    strcpy(m->idf_ver, "v6.0.1");
+    if (!(ovr & OVR_APP_VER))    strcpy(m->app_ver, "RLCD 0.1");
+    if (!(ovr & OVR_SSID))       strcpy(m->ssid,    "MyPhone-2.4G");
+    if (!(ovr & OVR_IP))         strcpy(m->ip,      "10.217.129.06");
+    if (!(ovr & OVR_MAC))        strcpy(m->mac,     "84:F7:03:6C:AA:BB");
 
     // --- SD 卡假数据（真机由 sdcard_bsp / user_app 填） ---
-    static bool s_sd_filled = false;
-    if (!s_sd_filled) {
-        m->sd_mounted   = true;
-        m->sd_total_mb  = 32 * 1024;    // 32 GB
-        m->sd_used_mb   = 3 * 1024 + 200;
-        s_sd_filled = true;
-    }
+    if (!(ovr & OVR_SD_MOUNTED)) m->sd_mounted  = true;
+    if (!(ovr & OVR_SD_TOTAL))   m->sd_total_mb = 32 * 1024;        // 32 GB
+    if (!(ovr & OVR_SD_USED))    m->sd_used_mb  = 3 * 1024 + 200;
+
     // --- Flash 用量假数据（真机由 user_app 扫描分区表填） ---
-    static bool s_flash_filled = false;
-    if (!s_flash_filled) {
-        m->flash_used_kb = 4 * 1024;    // 4 MB 已用
-        m->flash_free_kb = 12 * 1024;   // 12 MB 剩余
-        s_flash_filled = true;
-    }
+    if (!(ovr & OVR_FLASH_USED)) m->flash_used_kb = 4 * 1024;       // 4 MB 已用
+    if (!(ovr & OVR_FLASH_FREE)) m->flash_free_kb = 12 * 1024;      // 12 MB 剩余
 
     // --- 配网页假数据 ---
     static uint32_t s_started = 0;
     if (!s_started) s_started = (uint32_t)time(NULL);
-    m->uptime_sec = (uint32_t)time(NULL) - s_started;
-    static bool s_setup_filled = false;
-    if (!s_setup_filled) {
-        strcpy(m->ap_ssid, "RLCD-Setup");
-        strcpy(m->ap_ip,   "192.168.4.1");
-        s_setup_filled = true;
-    }
+    if (!(ovr & OVR_UPTIME))
+        m->uptime_sec = (uint32_t)time(NULL) - s_started;
+    if (!(ovr & OVR_AP_SSID)) strcpy(m->ap_ssid, "RLCD-Setup");
+    if (!(ovr & OVR_AP_IP))   strcpy(m->ap_ip,   "192.168.4.1");
 
     ui_pages_apply_locked();
 }

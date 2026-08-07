@@ -3,8 +3,8 @@
 #
 # 输出：**LVGL binfont 二进制**（.bin），落到 partitions/fonts/。
 # 通过 CMake 里的 spiffs_create_partition_image() 打包成 SPIFFS 镜像烧进
-# fonts 分区（2 MB）。运行时 ui_font.c 用 lv_binfont_create("A:/spiffs/xxx.bin")
-# 读取。加字只需：改本脚本 → 重跑 → `idf.py flash fonts`（只烧 2MB 分区，不动 app）。
+# fonts 分区（1 MB）。运行时 ui_font.c 用 lv_binfont_create("A:/spiffs/xxx.bin")
+# 读取。加字只需：改本脚本 → 重跑 → `idf.py flash fonts`（只烧字库分区，不动 app）。
 #
 # 依赖：node + `npm install -g lv_font_conv`
 #
@@ -30,8 +30,10 @@ mkdir -p "$OUT_DIR"
 # ---------- 字符集范围 ----------
 # GB2312 一级汉字：区位 16-55（每区 94 字，共 3755 字），Unicode 分布：
 #   最简做法：直接指定连续的 Unicode 区间 0x4E00-0x9FA5（CJK Unified Ideographs
-#   基本区）—— 但那有 20902 字，> 2MB 分区放不下（约 2.4MB）。
+#   基本区）—— 但那有 20902 字，16px 下约 700KB，塞进 1MB 分区后（还要装 96px/28px
+#   数字 + 天气图标 + SPIFFS 自身开销）余量太紧，而且多出来的字这个面板一个也用不上。
 #   所以走 GB2312 精确列表：从 python 生成一次范围表，写死在这里。
+#   当前实际占用：字库 3 份 + 表情 + 天气图标共约 257KB。
 #
 # 常用标点（拆到 CJK 字体 vs 拉丁字体 —— 拉丁标点走 DejaVu，CJK 全角标点走 Droid）：
 #   拉丁标点（ASCII 之外的常见）—— DejaVu 有

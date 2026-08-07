@@ -269,9 +269,9 @@ void weather_task(void *arg)
                     ESP_LOGW(NET_TAG, "weather: city resolve failed ('%s')", q);
             } else if (wx_fetch_now(s_cfg.weather_host, s_cfg.weather_apikey, &city, m)) {
                 // Daily（temp_min/max, uv, sunrise/sunset）一天只需拉一次：
-                // 数值为空（首次）或跨天时请求，其余轮次复用缓存。
+                // 数值仍是哨兵（首次未拉到）或跨天时请求，其余轮次复用缓存。
                 bool daily_needed = (last_daily_day == -1) ||
-                                    (m->temp_min == 0 && m->temp_max == 0) ||
+                                    (m->temp_min == UI_TEMP_NA) ||
                                     (m->day != last_daily_day);
                 if (daily_needed) {
                     if (wx_fetch_daily(s_cfg.weather_host, s_cfg.weather_apikey, &city, m)) {

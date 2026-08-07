@@ -10,6 +10,13 @@ extern "C" {
 #include <stdbool.h>
 #include <stdint.h>
 
+// 整型字段的"无数据"哨兵。float 字段直接用 NaN，整型没有 NaN 可用：
+//   * 百分比/指数类（cloud_pct / uv_index）取 -1
+//   * 摄氏温度类（temp_min / temp_max）可能是真负数，取 -999
+// 未初始化时必须是哨兵而不是 0 —— 否则启动后天气页会显示虚假的 "0 ℃ / 0 %"。
+#define UI_INT_NA    (-1)
+#define UI_TEMP_NA   (-999)
+
 typedef struct {
     // 时间
     int  hour;          // 0..23
@@ -31,18 +38,18 @@ typedef struct {
     char  weather_update[16];       // "15:42"
 
     // ---- 天气详情页用（QWeather 拉取时可选填） ----
-    float outdoor_humi;             // 室外湿度 %
-    float wind_speed_kmh;           // 风速 km/h
+    float outdoor_humi;             // 室外湿度 %，NaN 表示无数据
+    float wind_speed_kmh;           // 风速 km/h，NaN 表示无数据
     // QWeather windDir 是中文风向，最长 "无持续风向" = 15 字节；
     // 原来给 8 字节，"东北风"(9B) 被截成 7B 就断在汉字中间 → 显示 "东北□"
     char  wind_dir[20];             // "东北风" / "无持续风向"
-    int   cloud_pct;                // 云量百分比 0..100，-1 表示无数据
-    int   pressure_hpa;             // 气压 hPa
-    int   visibility_km;            // 能见度 km
-    float feels_like_temp;          // 体感温度 ℃
-    int   uv_index;                 // 紫外线指数 0..11
-    int   temp_min;                 // 今日最低温 ℃
-    int   temp_max;                 // 今日最高温 ℃
+    int   cloud_pct;                // 云量百分比 0..100，UI_INT_NA 表示无数据
+    int   pressure_hpa;             // 气压 hPa，0 表示无数据
+    int   visibility_km;            // 能见度 km，0 表示无数据
+    float feels_like_temp;          // 体感温度 ℃，NaN 表示无数据
+    int   uv_index;                 // 紫外线指数 0..11，UI_INT_NA 表示无数据
+    int   temp_min;                 // 今日最低温 ℃，UI_TEMP_NA 表示无数据
+    int   temp_max;                 // 今日最高温 ℃，UI_TEMP_NA 表示无数据
     char  sunrise[8];               // "06:12"
     char  sunset[8];                // "18:45"
 

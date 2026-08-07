@@ -28,6 +28,14 @@
 
 #include "lvgl.h"
 
+// 设备端要真正拿 LVGL 互斥；模拟器单线程渲染，锁退化成 no-op（同 ui_pages.c）。
+#ifdef ESP_PLATFORM
+#include "lvgl_bsp.h"
+#else
+static inline bool Lvgl_lock(int timeout_ms) { (void)timeout_ms; return true; }
+static inline void Lvgl_unlock(void) {}
+#endif
+
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -53,12 +61,21 @@
 #define WICON_H  40
 
 // -------- 全局数据 -------------------------------------------------
+// 未采集到数据的字段必须初始化成哨兵（NaN / UI_INT_NA / UI_TEMP_NA），
+// 否则天气页在首次拉取成功前会显示虚假的 "0 ℃ / 0 % / 体感 0"。
 static ui_model_t s_model = {
     .hour = 12, .minute = 0,
     .year = 2026, .month = 7, .day = 15, .weekday = 3,
     .indoor_temp = NAN, .indoor_humi = NAN,
     .outdoor_temp = NAN, .weather_code = 0,
     .weather_text = "", .city = "", .weather_update = "",
+    // 天气详情页字段：全部标记为"无数据"
+    .outdoor_humi = NAN, .wind_speed_kmh = NAN, .feels_like_temp = NAN,
+    .wind_dir = "",
+    .cloud_pct = UI_INT_NA, .uv_index = UI_INT_NA,
+    .pressure_hpa = 0, .visibility_km = 0,
+    .temp_min = UI_TEMP_NA, .temp_max = UI_TEMP_NA,
+    .sunrise = "", .sunset = "",
     .wifi_connected = false, .wifi_rssi = 0,
     .battery_percent = 0, .battery_charging = false,
 };
@@ -306,7 +323,13 @@ void ui_home_apply_locked(void)
                           s_model.battery_percent, s_model.battery_charging);
 }
 
+// 头文件承诺"可从任何任务调用，内部会加锁" —— 这里必须真的加锁，
+// 否则从非 LVGL 任务调用就是在渲染任务眼皮下改控件树（data race）。
+// 已持锁的调用方请直接用 ui_home_apply_locked()，避免自死锁。
 void ui_home_request_refresh(void)
 {
-    ui_home_apply_locked();
+    if (Lvgl_lock(200)) {
+        ui_home_apply_locked();
+        Lvgl_unlock();
+    }
 }

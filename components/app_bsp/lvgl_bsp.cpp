@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 #include <esp_log.h>
 #include <esp_timer.h>
 #include "lvgl_bsp.h"
@@ -28,12 +29,36 @@ void Lvgl_unlock(void)
   	xSemaphoreGive(lvgl_mux);
 }
 
+// LVGL 渲染任务栈。CJK 字体渲染（16px 6763 字字库 + 96px 时钟）在 glyph
+// 解码路径上会用掉不少局部缓冲，8 KiB 余量偏薄；抬到 12 KiB 并周期性报告
+// 高水位，方便在真机日志里确认实际余量（低于 1 KiB 就该继续加）。
+#define LVGL_TASK_STACK_BYTES   (12 * 1024)
+#define LVGL_STACK_REPORT_MS    (60 * 1000)
+#define LVGL_STACK_WARN_BYTES   1024
+
+static void Lvgl_report_stack(void)
+{
+    static uint32_t s_next_report_ms = LVGL_STACK_REPORT_MS;
+    uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000);
+    if (now_ms < s_next_report_ms) return;
+    s_next_report_ms = now_ms + LVGL_STACK_REPORT_MS;
+
+    size_t free_bytes = uxTaskGetStackHighWaterMark(NULL) * sizeof(StackType_t);
+    if (free_bytes < LVGL_STACK_WARN_BYTES) {
+        ESP_LOGW(TAG, "LVGL 任务栈余量仅 %u B（栈 %u B），建议加大",
+                 (unsigned)free_bytes, (unsigned)LVGL_TASK_STACK_BYTES);
+    } else {
+        ESP_LOGI(TAG, "LVGL 任务栈余量 %u B / %u B",
+                 (unsigned)free_bytes, (unsigned)LVGL_TASK_STACK_BYTES);
+    }
+}
+
 static void Lvgl_port_task(void *arg)
 {
   	uint32_t task_delay_ms = LVGL_TASK_MAX_DELAY_MS;
   	for(;;)
   	{
-  	  	if (Lvgl_lock(-1)) 
+  	  	if (Lvgl_lock(-1))
   	  	{
   	  	  	task_delay_ms = lv_timer_handler();
   	  	  	//Release the mutex
@@ -46,6 +71,7 @@ static void Lvgl_port_task(void *arg)
   	  	{
   	  	  	task_delay_ms = LVGL_TASK_MIN_DELAY_MS;
   	  	}
+  	  	Lvgl_report_stack();
   	  	vTaskDelay(pdMS_TO_TICKS(task_delay_ms));
   	}
 }
@@ -75,5 +101,5 @@ void Lvgl_PortInit(int width, int height, DispFlushCb flush_cb) {
   	ESP_ERROR_CHECK(esp_timer_create(&lvgl_tick_timer_args, &lvgl_tick_timer));
   	ESP_ERROR_CHECK(esp_timer_start_periodic(lvgl_tick_timer,LVGL_TICK_PERIOD_MS * 1000));
 
-    xTaskCreatePinnedToCore(Lvgl_port_task, "LVGL", 8 * 1024, NULL, 5, NULL, 0);
+    xTaskCreatePinnedToCore(Lvgl_port_task, "LVGL", LVGL_TASK_STACK_BYTES, NULL, 5, NULL, 0);
 }

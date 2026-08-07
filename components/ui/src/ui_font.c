@@ -5,7 +5,7 @@
 // 模拟器：字库直接是 partitions/fonts/*.bin（工作目录下的普通文件），
 //       simulator/main.c 调 UiFont_LoadFromDir() 指定目录加载。
 //
-// 加字流程：改 tools/gen_font.sh → 重跑 → idf.py flash-fonts（只烧 2MB 分区，
+// 加字流程：改 tools/gen_font.sh → 重跑 → idf.py flash-fonts（只烧 1MB 分区，
 // 不动 4MB app）。运行时 lv_binfont_create() 打开文件流式读入 font 结构。
 
 #include "ui_font.h"

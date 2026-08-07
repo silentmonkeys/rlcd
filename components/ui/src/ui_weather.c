@@ -238,11 +238,15 @@ void ui_weather_apply_locked(void)
         lv_label_set_text(lbl_uv, s_buf);
     } else lv_label_set_text(lbl_uv, "--");
 
-    // 今日卡
-    snprintf(s_buf, sizeof(s_buf), "%d ℃", m->temp_min);
-    lv_label_set_text(lbl_temp_min, s_buf);
-    snprintf(s_buf, sizeof(s_buf), "%d ℃", m->temp_max);
-    lv_label_set_text(lbl_temp_max, s_buf);
+    // 今日卡（temp_min/max 未拉到时是 UI_TEMP_NA，不能当真值显示）
+    if (m->temp_min > UI_TEMP_NA) {
+        snprintf(s_buf, sizeof(s_buf), "%d ℃", m->temp_min);
+        lv_label_set_text(lbl_temp_min, s_buf);
+    } else lv_label_set_text(lbl_temp_min, "--");
+    if (m->temp_max > UI_TEMP_NA) {
+        snprintf(s_buf, sizeof(s_buf), "%d ℃", m->temp_max);
+        lv_label_set_text(lbl_temp_max, s_buf);
+    } else lv_label_set_text(lbl_temp_max, "--");
     if (m->cloud_pct >= 0) {
         snprintf(s_buf, sizeof(s_buf), "%d %%", m->cloud_pct);
         lv_label_set_text(lbl_cloud, s_buf);

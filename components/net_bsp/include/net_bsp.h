@@ -54,6 +54,13 @@ bool NetBsp_GetPublicIp(uapi_myip_t *out);
 // 不自带任务，由调用方周期性调用（user_app tick_task 的 5s 慢节拍）。
 void NetBsp_OfflineWatchdogTick(void);
 
+// OTA 自检的一次性检查：新固件首次启动处于 PENDING_VERIFY，连续稳定运行
+// 满 OTA_SELFTEST_HOLD_S 秒后调 esp_ota_mark_app_valid_cancel_rollback()
+// 确认可用；在那之前若 panic/看门狗复位，bootloader 自动回滚到上一个槽。
+// 和无网看门狗一样不自带任务，由 user_app tick_task 的 5s 慢节拍调用；
+// 非 PENDING_VERIFY 状态（含正常烧写启动）时函数自身 early-return。
+void NetBsp_OtaSelfTestTick(void);
+
 // 读/写当前配置（线程安全，会立刻落 NVS）
 bool NetBsp_LoadConfig(net_config_t *out);
 bool NetBsp_SaveConfig(const net_config_t *in);
