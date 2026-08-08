@@ -66,6 +66,8 @@ function tick(){api('/api/status').then(function(s){
   Y.push({k:'Flash 剩余',v:s.flash_free!=null?s.flash_free+' KB':'—'});Y.push({k:'运行时长',v:dur(s.uptime)});
   Y.push({k:'SD 卡',v:s.sd?'已挂载':'未插入'});
   $('sysinfo').innerHTML=kvHtml(Y);
+  // 升级卡片标题右侧显示当前固件版本 —— 上传前能对照一眼，不用回头看上面那张表
+  $('f_fwcur').textContent=s.app?'当前 '+s.app:'';
   if(!s.sd){$('nosd').hidden=false;$('calbody').classList.add('off');}
   else{$('nosd').hidden=true;$('calbody').classList.remove('off');}
 }).catch(function(){})}
@@ -181,6 +183,30 @@ function loadData(){
   }).catch(function(e){toast(e.message,'bad')});
 }
 
+// 外部接口调用次数 —— 只显示"哪个接口调了几次"，不画趋势图。
+// 明细（含每次的调用时间）在设备的 SD 卡上按月分文件存，聚合由设备侧完成，
+// 这里拿到的已经是各接口的次数。
+function statsRender(j){
+  var box=$('apistats'),h=$('statshint');
+  var items=(j&&j.items)||[];
+  box.innerHTML=items.map(function(x){
+    return '<div class=strow><span class=nm>'+esc(x.name)+'</span>'
+      +(x.fail?'<span class=fl>失败 '+x.fail+'</span>':'')
+      +'<span class=n>'+x.n+'</span></div>'}).join('');
+  if(!j||!j.valid){
+    h.textContent=j&&!j.sd?'未检测到 SD 卡，调用记录无法保存。'
+      :'设备时间尚未校准，暂无可统计的记录。';
+  }else{
+    h.textContent='统计自 '+j.from+' 起，共 '+j.total+' 次。明细按月存于 SD 卡。';
+  }
+}
+function loadStats(){
+  busy('btnstats',true);
+  return api('/api/apistat?p='+$('stat_sel').value).then(statsRender)
+    .catch(function(e){toast(e.message,'bad')})
+    .then(function(){busy('btnstats',false)});
+}
+
 document.addEventListener('DOMContentLoaded', function(){
   pwbtn('p_toggle','f_pass');pwbtn('h_toggle','f_host');pwbtn('k_toggle','f_key');
   pwbtn('u_toggle','f_uapi');
@@ -194,7 +220,7 @@ document.addEventListener('DOMContentLoaded', function(){
     var n=b.dataset.t;document.querySelectorAll('.tab').forEach(function(x,i){
       x.classList.toggle('active',''+i==n)});
     document.querySelectorAll('.page').forEach(function(x,i){
-      x.classList.toggle('active',''+i==n)});if(n==4)setTimeout(loadData,100);
+      x.classList.toggle('active',''+i==n)});if(n==4){setTimeout(loadData,100);loadStats();}
   }});
   on('btnstat',function(){busy('btnstat',true);
     tick();loadPubip();setTimeout(function(){busy('btnstat',false)},600)});
@@ -261,6 +287,8 @@ document.addEventListener('DOMContentLoaded', function(){
     .then(function(){dirty=false;toast('日历已保存至 SD 卡','ok')})
     .catch(function(e){toast(e.message,'bad')}).then(function(){busy('btncal',false)})});
   $('range_sel').onchange=drawChart;
+  $('stat_sel').onchange=loadStats;
+  on('btnstats',loadStats);
   // ---- 数据导出：两种范围 ------------------------------------------
   // CSV 表头与设备侧 user_app.c 的 CSV_HEADER 保持一致。
   var CSV_HEAD='timestamp,indoor_temp,indoor_humi,outdoor_temp,outdoor_humi,weather,city,wifi_rssi';
@@ -304,19 +332,49 @@ document.addEventListener('DOMContentLoaded', function(){
   // ---- 固件升级（OTA） ---------------------------------------------
   // 用 XHR 而不是 fetch：只有 XHR 能报告**上传**进度（fetch 的 ReadableStream
   // 上传在多数浏览器仍不可用）。固件以 raw body 发送，设备边收边写 Flash。
-  $('f_fw').onchange=function(){
-    var f=this.files&&this.files[0];
+  // 选中 / 拖入固件后统一走这里：更新投放区的两行文字 + 解禁上传按钮。
+  // 进度条区（otabox）在**真正开始上传时**才显示 —— 之前一选文件就显示一个
+  // 空进度条 + "待上传文件：xxx"，和投放区里的文件名重复，还让人以为已经在传了。
+  function fwShow(f){
+    var d=$('fwdrop');
     busy('btnota',!f);
-    if(f)$('otamsg').textContent='待上传文件：'+f.name+'（'+fsize(f.size)+'）';
-    $('otabox').hidden=!f;
+    d.className='drop'+(f?' on':'');
+    $('f_fwname').textContent=f?f.name:'选择固件文件';
+    $('f_fwsize').textContent=f?fsize(f.size):'点击选择或拖入 rlcd_home.bin';
+    $('btnfwx').hidden=!f;
+    $('otabox').hidden=true;
     $('otabar').style.width='0';$('otabar').parentNode.className='bar';
-  };
+  }
+  $('f_fw').onchange=function(){fwShow(this.files&&this.files[0])};
+  // 移除按钮在 label 内部，不拦事件的话点它会冒泡到 label 又弹出文件选择框
+  $('btnfwx').addEventListener('click',function(e){
+    e.preventDefault();e.stopPropagation();
+    $('f_fw').value='';fwShow(null);
+  });
+  // 拖放：把 DataTransfer 的文件塞回 input，后续流程（校验/上传）与点选完全一致。
+  // dragover 必须 preventDefault，否则浏览器默认行为是"直接打开这个文件"。
+  (function(){
+    var d=$('fwdrop');
+    function stop(e){e.preventDefault();e.stopPropagation()}
+    ['dragenter','dragover'].forEach(function(n){d.addEventListener(n,function(e){
+      stop(e);d.classList.add('over')})});
+    ['dragleave','drop'].forEach(function(n){d.addEventListener(n,function(e){
+      stop(e);d.classList.remove('over')})});
+    d.addEventListener('drop',function(e){
+      var f=e.dataTransfer&&e.dataTransfer.files&&e.dataTransfer.files[0];
+      if(!f)return;
+      // DataTransfer 可直接赋给 input.files（现代浏览器均支持），这样
+      // btnota 里读 $('f_fw').files 的逻辑不用为拖放开第二条分支。
+      try{$('f_fw').files=e.dataTransfer.files}catch(err){}
+      fwShow(f);
+    });
+  })();
   on('btnota',function(){
     var f=$('f_fw').files&&$('f_fw').files[0];
     if(!f){toast('请先选择固件文件','bad');return}
     if(!/\.bin$/i.test(f.name)){toast('固件文件应为 .bin 格式','bad');return}
     if(!confirm('将向设备写入固件 '+f.name+'，完成后设备自动重启。是否继续？'))return;
-    busy('btnota',true);$('f_fw').disabled=true;$('otabox').hidden=false;
+    busy('btnota',true);$('fwdrop').classList.add('busy');$('otabox').hidden=false;
     var bar=$('otabar'),wrap=bar.parentNode,msg=$('otamsg');
     wrap.className='bar';bar.style.width='0';msg.textContent='正在上传 0%';
     // 上传期间停掉 5 秒状态轮询：设备侧 httpd 是**单任务串行**处理，ota_post
@@ -339,7 +397,7 @@ document.addEventListener('DOMContentLoaded', function(){
     };
     function fail(m){resumeTick();
       wrap.className='bar bad';msg.textContent=m;
-      toast(m,'bad');busy('btnota',false);$('f_fw').disabled=false}
+      toast(m,'bad');busy('btnota',false);$('fwdrop').classList.remove('busy')}
     x.onload=function(){
       var j={};try{j=JSON.parse(x.responseText)}catch(e){}
       if(x.status===200&&j.ok!==false){
@@ -374,7 +432,7 @@ document.addEventListener('DOMContentLoaded', function(){
   tick();tickTimer=setInterval(tick,5000);
   loadPubip();
   setTimeout(function(){var obs=new IntersectionObserver(function(es){es.forEach(function(e){
-    if(e.isIntersecting&&!rawRows){obs.disconnect();loadData();}
+    if(e.isIntersecting&&!rawRows){obs.disconnect();loadData();loadStats();}
   })});obs.observe($('cv'));},200);
   window.onbeforeunload=function(){if(dirty)return '日历有未保存的修改'};
 });

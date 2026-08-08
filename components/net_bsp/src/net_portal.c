@@ -17,6 +17,7 @@
 //   POST /api/reboot         重启
 //   POST /api/forget         清 WiFi 凭据并重启
 //   GET  /api/data/csv       CSV 数据（默认最新若干行；?full=1 为完整文件）
+//   GET  /api/apistat        外部接口调用次数统计（?p=day|week|month|year）
 //   POST /api/ota            上传固件做 OTA（见 net_ota.c），成功后自动重启
 //   404 → 302 /              让手机的 Captive Portal 探测自动弹出本页
 //
@@ -1084,11 +1085,65 @@ static esp_err_t csv_get(httpd_req_t *req)
 }
 
 // =====================================================================
+// GET /api/apistat?p=day|week|month|year
+// —— 外部接口调用次数（明细存 SD，见 net_apistat.c）。只回次数，不回时间序列：
+//    前端就是一行一个接口显示数字，不画图。
+// =====================================================================
+static esp_err_t apistat_get(httpd_req_t *req)
+{
+    api_period_t p = API_PERIOD_MONTH;   // 默认本月，与前端 <select> 的 selected 一致
+    char q[48], v[12];
+    if (httpd_req_get_url_query_str(req, q, sizeof(q)) == ESP_OK &&
+        httpd_query_key_value(q, "p", v, sizeof(v)) == ESP_OK) {
+        if      (strcmp(v, "day")   == 0) p = API_PERIOD_DAY;
+        else if (strcmp(v, "week")  == 0) p = API_PERIOD_WEEK;
+        else if (strcmp(v, "year")  == 0) p = API_PERIOD_YEAR;
+        else if (strcmp(v, "month") == 0) p = API_PERIOD_MONTH;
+        else return send_err(req, "400 Bad Request", "时间范围参数不正确");
+    }
+
+    api_stat_t st;
+    const bool ok = NetBsp_ApiStatQuery(p, &st);
+
+    // 4 个接口 × 约 90B + 外壳，512 够；加接口时这里要跟着放大
+    char buf[512];
+    jw_t w = { buf, sizeof(buf), 0, false };
+    jw_putc(&w, '{');
+    jw_kv_bool(&w, "ok", true);
+    // valid=false 表示统计不可用（无 SD 或系统时间未校准），前端给出对应提示
+    jw_kv_bool(&w, "valid", ok);
+    jw_kv_bool(&w, "sd", ui_model_get()->sd_mounted);
+    if (ok) {
+        char from[16];
+        snprintf(from, sizeof(from), "%04d-%02d-%02d", st.from_year, st.from_month, st.from_day);
+        jw_kv_str(&w, "from", from);
+    }
+    jw_key(&w, "items");
+    jw_putc(&w, '[');
+    unsigned total = 0;
+    for (int i = 0; i < API_CALL_COUNT; i++) {
+        jw_comma(&w);
+        jw_putc(&w, '{');
+        jw_kv_str(&w, "name", NetBsp_ApiCallName((api_call_id_t) i));
+        jw_kv_int(&w, "n",    st.count[i]);
+        jw_kv_int(&w, "fail", st.fail[i]);
+        jw_putc(&w, '}');
+        total += st.count[i];
+    }
+    jw_putc(&w, ']');
+    jw_kv_int(&w, "total", total);
+    jw_putc(&w, '}');
+
+    if (w.ovf) return send_err(req, "500 Internal Server Error", "统计数据过长");
+    return send_json(req, "200 OK", buf);
+}
+
+// =====================================================================
 void config_httpd_start(void)
 {
     if (s_httpd) return;
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
-    cfg.max_uri_handlers  = 20;   // 当前 16 条，留几个余量（超了会静默注册失败）
+    cfg.max_uri_handlers  = 20;   // 当前 17 条，留几个余量（超了会静默注册失败）
     cfg.stack_size        = 8 * 1024;   // JSON 生成 + snprintf 需要点栈
     // scan 阻塞 ~2-3s，把发送/接收 timeout 拉长避免浏览器提前断连
     cfg.recv_wait_timeout = 10;
@@ -1111,6 +1166,7 @@ void config_httpd_start(void)
         { .uri = "/api/reboot",          .method = HTTP_POST, .handler = reboot_post },
         { .uri = "/api/forget",          .method = HTTP_POST, .handler = forget_post },
         { .uri = "/api/data/csv",        .method = HTTP_GET,  .handler = csv_get },
+        { .uri = "/api/apistat",         .method = HTTP_GET,  .handler = apistat_get },
         { .uri = "/api/ota",             .method = HTTP_POST, .handler = ota_post },
     };
     for (size_t i = 0; i < sizeof(routes) / sizeof(routes[0]); i++) {

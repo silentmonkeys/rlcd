@@ -59,6 +59,12 @@ bool NetBsp_FetchPublicIp(uapi_myip_t *out)
     size_t len = 0;
     char *body = net_http_get_text(UAPI_URL_MYIP_COMMERCIAL, &io, &len);
 
+    // 调用统计（记 SD，供门户「数据」页聚合）：**发出去就算一次**，成败分列。
+    // 放在这里而不是各 return 分支前 —— 下面每条失败路径都得记，漏一条统计就偏。
+    // 走到这一行时 HTTP 请求已经发完了，body==NULL 只是没拿到可用响应。
+    bool http_ok = (body != NULL && io.status >= 200 && io.status < 300);
+    NetBsp_ApiCallRecord(API_CALL_UAPI_MYIP, http_ok);
+
     // 连不上 / 无 body：网络异常或超时，交给调用方按节拍重试
     if (!body) {
         ESP_LOGW(NET_TAG, "uapi myip: 请求失败（网络异常/超时），status=%d", io.status);

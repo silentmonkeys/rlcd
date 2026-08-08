@@ -71,7 +71,7 @@ GUI 客户端见 [tools/rlcd_debug_gui/README.md](tools/rlcd_debug_gui/README.md
 - **port_bsp** — DisplayPort C++ 类（SPI3 驱动 RLCD）、I2C 主机 + SHTC3 驱动、按键 BSP（multi_button + 5ms tick）、电池 ADC（`adc_bsp` — ADC1_CH3/GPIO4 + 曲线校准 ×3 分压）、SD 卡 BSP（SDMMC 1-line + 5s 热插拔探活）。引脚见 `main/user_config.h`。
 - **app_bsp** — LVGL v9 端口：tick 定时器、任务 handler、互斥（Lvgl_lock/unlock）。
 - **ui** — 共享 UI。`ui_home_create()` 建树；其他任务写 `ui_model_get()` 后调 `ui_home_request_refresh()` 或 `ui_home_apply_locked()`。
-- **net_bsp** — WiFi STA/SoftAP、HTTP 配网门户、NVS 持久化、天气拉取（**QWeather** 单一 provider）。按职责拆为多文件：`net_bsp.c`（入口 + 共享状态 + NVS + 看门狗）/ `net_wifi.c`（WiFi 事件 + SNTP）/ `net_portal.c`（管理门户：静态资源 + JSON API）/ `net_http.c`（**共享** HTTPS GET + gzip 解压 + 轻量 JSON 取值，QWeather 与 UAPI 共用）/ `net_weather.c`（QWeather API）/ `net_uapi.c`（**UAPI uapis.cn** `/network/myip`：公网 IP + 自动城市）/ `net_calendar.c`（日历存 SD，原子写）/ `net_ota.c`（`POST /api/ota` 流式接收固件写备用 app 槽）/ `net_internal.h`（组件内共享声明）。对外 API 仍只在 `net_bsp.h`。门户前端**权威源码在 `components/net_bsp/portal/`**（index.html / style.css / app.js），改完必须跑 `python3 tools/gen_portal.py` 重新生成 `src/portal_assets.h`（gzip 字节数组，勿手改）+ `simulator/portal_preview.html`（带 mock，浏览器直接打开可预览）。
+- **net_bsp** — WiFi STA/SoftAP、HTTP 配网门户、NVS 持久化、天气拉取（**QWeather** 单一 provider）。按职责拆为多文件：`net_bsp.c`（入口 + 共享状态 + NVS + 看门狗）/ `net_wifi.c`（WiFi 事件 + SNTP）/ `net_portal.c`（管理门户：静态资源 + JSON API）/ `net_http.c`（**共享** HTTPS GET + gzip 解压 + 轻量 JSON 取值，QWeather 与 UAPI 共用）/ `net_weather.c`（QWeather API）/ `net_uapi.c`（**UAPI uapis.cn** `/network/myip`：公网 IP + 自动城市）/ `net_apistat.c`（**外部接口调用统计**，明细存 SD 按月分文件）/ `net_calendar.c`（日历存 SD，原子写）/ `net_ota.c`（`POST /api/ota` 流式接收固件写备用 app 槽）/ `net_internal.h`（组件内共享声明）。对外 API 仍只在 `net_bsp.h`。门户前端**权威源码在 `components/net_bsp/portal/`**（index.html / style.css / app.js），改完必须跑 `python3 tools/gen_portal.py` 重新生成 `src/portal_assets.h`（gzip 字节数组，勿手改）+ `simulator/portal_preview.html`（带 mock，浏览器直接打开可预览）。
 - **user_app** — 传感器 / 电池 ADC 初始化 + 1Hz tick 任务把读数写入 ui_model（温湿度每秒；电量、充电趋势、SD 探活、无网看门狗共用 5s 慢节拍）；独立 CSV 日志任务（fsync 落盘）。RTC 待硬件到货再接。
 
 ## 后台任务与节拍
@@ -108,6 +108,26 @@ GUI 客户端见 [tools/rlcd_debug_gui/README.md](tools/rlcd_debug_gui/README.md
 - **门户**：天气页「刷新城市」按钮（城市非空时后端回 409）；网络页「公网 IP」卡片
   用同一套 `.grid/.kv` 布局展示 ip/region/district/isp。接口 `POST /api/city_refresh`、
   `GET /api/pubip`。
+
+## 外部接口调用统计（net_apistat.c）
+
+门户「数据」页显示「哪个外部接口调了几次」，**只有次数，不画折线图**。
+
+- **存储**：`/sdcard/rlcd/api/YYYY-MM.csv`，一行一次调用 `timestamp,api,ok`（存**完整调用时间**）。
+  **按月分文件**：查询窗口最长「本年」，今日/本月只需读 1 个文件、本周跨月最多 2 个、
+  本年最多 12 个 —— 每次查询的读取量都有上界；单文件方案里"查今天"也得扫全年。
+  删旧数据 = 删整个文件。约 40B/行，天气 10min×2 端点 ≈ 300 行/天。
+- **不维护持久化计数器**：聚合在查询时用块扫（1KB 块 + 手工切行，不用 fgets）现算。
+  计数器一旦和明细不一致就没法对账，掉电还会丢增量。
+- **窗口是自然周期**（今日 / 本周一起 / 本月 1 号起 / 本年 1 月 1 日起），和服务商配额的
+  重置口径一致；滚动窗口（近 30 天）对不上账单。行内比较用打包的 `YYYYMMDD` 整数而非
+  `mktime` —— 查本年约 10 万行，而 httpd 是单任务串行的。
+- **记录时机**：`wx_fetch()` / `NetBsp_FetchPublicIp()` 里**发出去就记一条**，成败分列
+  （`count` / `fail`）。只记成功的话，限流或凭据错时统计会显示"几乎没调用"，正好和实际相反。
+- **加一个接口**：`net_bsp.h` 的 `api_call_id_t` 加枚举 + `net_apistat.c` 的 `API_TABLE` 加一行，
+  调用处 `NetBsp_ApiCallRecord(id, ok)`。记录/聚合/门户展示全自动跟上（注意 `apistat_get`
+  的 `buf[512]` 按接口数放大）。
+- 接口：`GET /api/apistat?p=day|week|month|year`。无 SD / 未 SNTP 校时 → `valid:false`。
 
 ## 状态栏显示规则
 

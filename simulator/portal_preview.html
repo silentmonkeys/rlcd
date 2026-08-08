@@ -111,6 +111,10 @@ color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:
 .btn:active{transform:translateY(1px)}
 .btn[disabled]{opacity:.5;cursor:progress}
 .btn.primary{background:var(--acc);border-color:var(--acc);color:#fff}
+/* primary 按钮禁用时不能只压 opacity —— 半透明的蓝在浅色背景上会变成一片
+   发白的淡紫，比正常态更抢眼，却又点不动。禁用态直接退成中性灰。 */
+.btn.primary[disabled]{opacity:1;cursor:not-allowed;background:var(--bg);
+border-color:var(--line);color:var(--mut)}
 .btn.danger{background:none;border-color:var(--err);color:var(--err)}
 .btn.sm{width:auto;margin:0;padding:7px 12px;font-size:13px;font-weight:500;flex:none}
 
@@ -162,13 +166,61 @@ color:var(--err);background:none;border:0;border-radius:5px;cursor:pointer}
 .dlrow .btn{margin-top:0}
 @media(max-width:420px){.dlrow{grid-template-columns:1fr}}
 
-/* 固件上传：文件选择框与其他输入框同高同风格 */
-input[type=file]{width:100%;height:38px;padding:6px 10px;font:inherit;font-size:13px;
-color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:7px;
-cursor:pointer}
-input[type=file]::file-selector-button{margin-right:10px;padding:4px 10px;font:inherit;
-font-size:12px;color:var(--fg);background:var(--card);border:1px solid var(--line);
-border-radius:5px;cursor:pointer}
+/* 固件上传区 —— **不用**原生 input[type=file] 的外观。
+   原生控件里"选择文件"按钮和文件名是浏览器自己排的：按钮高度、文字基线、两者
+   的垂直对齐都不受 CSS 控制，套上 height:38px 只会让内容在框里偏上/偏下。
+
+   上一版改成「label 当按钮 + span 显示文件名」仍然违和，两个原因：
+     * 一个 38px 高、带边框圆角的横条，长得和上面那些输入框一模一样 —— 看着
+       像能输入，其实只能点；
+     * "选择文件"的底色是 var(--card)，和卡片同色，读起来不像按钮，只像一段
+       浮着的文字加一条分隔线。
+   现在整块就是**一个可点击区域**（label 包住隐藏的 input），虚线边框明确表示
+   "这是投放/选择文件的地方"而非输入框，同时接受拖放。
+
+   这一版把它从"居中大方块"压成**一行**：原来 80px 高的居中投放区 + 下面同宽的
+   整宽主按钮，视觉上是上下两个大色块，中间夹小字，节奏很乱。改成
+   「图标 + 左对齐两行文字 + 右侧移除按钮」的横向一行后，高度和上面的输入框、
+   下面的按钮同一量级，卡片内部才有统一的行高节奏。虚线边框保留 —— 它是
+   "这里不是输入框"的唯一视觉线索。 */
+.drop{position:relative;display:flex;align-items:center;gap:10px;margin-top:10px;
+padding:9px 10px;text-align:left;cursor:pointer;background:var(--bg);
+border:1px dashed var(--line);border-radius:8px;
+transition:border-color .15s,background .15s}
+/* input 视觉隐藏但仍在 label 内 —— 键盘可聚焦，无障碍不丢 */
+.drop input[type=file]{position:absolute;left:0;top:0;width:1px;height:1px;opacity:0}
+.drop:hover,.drop.over{border-color:var(--acc);background:var(--card)}
+.drop.over{border-style:solid}
+.drop:focus-within{outline:2px solid var(--acc);outline-offset:-1px}
+/* 图标同样用 SVG mask 画线稿（与 .pwbtn / .lock 一致，不用 emoji）：
+   未选文件是"上传"箭头，选了文件换成文档图标并转成强调色。 */
+.drop::before{content:'';flex:none;width:20px;height:20px;background-color:var(--mut);
+-webkit-mask:var(--ico) center/20px 20px no-repeat;
+mask:var(--ico) center/20px 20px no-repeat;
+--ico:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4'/%3E%3Cpolyline points='17 8 12 3 7 8'/%3E%3Cline x1='12' y1='3' x2='12' y2='15'/%3E%3C/svg%3E")}
+.drop.on::before{background-color:var(--acc);
+--ico:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z'/%3E%3Cpolyline points='14 2 14 8 20 8'/%3E%3C/svg%3E")}
+.drop.on{border-style:solid;border-color:var(--acc)}
+/* 上传中：整块不可点，避免中途换文件 */
+.drop.busy{pointer-events:none;opacity:.55}
+.drop .dtx{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
+.drop .t1{font-size:13px;font-weight:600;color:var(--fg);overflow-wrap:anywhere;
+line-height:1.35}
+.drop .t2{font-size:11px;color:var(--mut);font-variant-numeric:tabular-nums;
+line-height:1.35}
+/* 移除按钮在 label 内部，点它会冒泡到 label 再打开文件框 —— app.js 里
+   stopPropagation + preventDefault 拦掉 */
+.drop .dx{flex:none;width:22px;height:22px;padding:0;font-size:15px;line-height:1;
+color:var(--mut);cursor:pointer;background:none;border:0;border-radius:6px}
+.drop .dx:hover{color:var(--err);background:var(--line)}
+
+/* 接口调用统计：一行一个接口，右侧对齐次数 —— 只看次数，不画折线图 */
+.strow{display:flex;align-items:center;gap:8px;background:var(--bg);border-radius:7px;
+padding:8px 10px;margin:6px 0}
+.strow .nm{flex:1;min-width:0;overflow-wrap:anywhere}
+.strow .fl{flex:none;font-size:11px;color:var(--err)}
+.strow .n{flex:none;font-size:16px;font-weight:600;font-variant-numeric:tabular-nums}
+
 code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;
 background:var(--bg);padding:1px 5px;border-radius:4px}
 
@@ -308,17 +360,35 @@ font-size:13px;opacity:0;transition:.2s;pointer-events:none;z-index:99}
 <button class='btn primary' id=btndl>导出完整记录</button>
 </div>
 <p class=hint id=dlhint>「当前图表数据」仅包含图表所选时间范围内的记录；「完整记录」包含 SD 卡内的全部历史数据。</p>
+</div>
+<div class=card><div class=cardhd><b>外部接口调用次数</b>
+<select id=stat_sel class=auto>
+<option value=day>今日</option>
+<option value=week>本周</option>
+<option value=month selected>本月</option>
+<option value=year>本年</option>
+</select>
+<button class='btn sm' id=btnstats>刷新</button></div>
+<div id=apistats class=list></div>
+<p class=hint id=statshint>每次调用的时间都记录在 SD 卡，按月分文件存储。</p>
 </div></section>
 
 <section class=page id=p5>
 <div class=card><div class=grid id=sysinfo></div></div>
-<div class=card><b>固件升级</b>
-<p class=hint>选择编译生成的 <code>rlcd_home.bin</code> 固件文件。升级过程中请勿断电或断开网络。</p>
-<div class=inwrap><input type=file id=f_fw accept=.bin></div>
+<div class=card><div class=cardhd><b>固件升级</b>
+<span class=cnt id=f_fwcur></span></div>
+<label class=drop id=fwdrop>
+<input type=file id=f_fw accept=.bin>
+<span class=dtx>
+<span class=t1 id=f_fwname>选择固件文件</span>
+<span class=t2 id=f_fwsize>点击选择或拖入 rlcd_home.bin</span>
+</span>
+<button type=button class=dx id=btnfwx hidden aria-label=移除所选文件>×</button>
+</label>
 <div id=otabox hidden><div class=bar><i id=otabar></i></div>
 <p class=hint id=otamsg>准备中</p></div>
 <button class='btn primary' id=btnota disabled>上传并升级</button>
-<p class=warn>升级完成后设备将自动重启，约 15 秒后重新上线。</p>
+<p class=warn>升级过程中请勿断电或断开网络；完成后设备自动重启，约 15 秒后重新上线。</p>
 </div>
 <div class=card><b>维护操作</b>
 <button class=btn id=btnreboot>重启设备</button>
@@ -350,6 +420,18 @@ font-size:13px;opacity:0;transition:.2s;pointer-events:none;z-index:99}
     labels:["今天也要加油","保持好心情","新的一天新的开始"]};
   var SCAN={ok:true,aps:[{ssid:"MyHome_2.4G",rssi:-48,auth:true},
     {ssid:"Neighbor_WiFi",rssi:-72,auth:true},{ssid:"Guest_Free",rssi:-85,auth:false}]};
+  /* 接口调用统计：次数随所选窗口缩放，看得出 day < week < month < year */
+  function apistat(u){
+    var p=(String(u).split("p=")[1]||"month");
+    var k={day:1,week:6,month:26,year:300}[p]||26;
+    return {ok:true,valid:true,sd:true,
+      from:{day:"2026-08-08",week:"2026-08-03",month:"2026-08-01",year:"2026-01-01"}[p],
+      items:[{name:"和风天气 · 城市解析",n:1*k,fail:0},
+             {name:"和风天气 · 实况",n:6*k,fail:Math.floor(k/9)},
+             {name:"和风天气 · 每日预报",n:1*k,fail:0},
+             {name:"UAPI · 公网 IP 定位",n:1*k,fail:0}],
+      total:9*k};
+  }
   function csv(){
     var h="timestamp,indoor_temp,indoor_humi,outdoor_temp,outdoor_humi,weather,city,wifi_rssi\n";
     var rows=[],now=Date.now();
@@ -372,6 +454,7 @@ font-size:13px;opacity:0;transition:.2s;pointer-events:none;z-index:99}
     if(u==='/api/scan')     return J(SCAN);
     if(u==='/api/config')   return post?J({ok:true}):J(CONFIG);
     if(u==='/api/pubip')    return J(PUBIP);
+    if(String(u).indexOf('/api/apistat')===0) return J(apistat(u));
     if(u==='/api/calendar') return post?J({ok:true}):J(CAL);
     if(u==='/api/data/csv') return Promise.resolve({ok:true,status:200,
       text:function(){return Promise.resolve(csv())},
@@ -450,6 +533,8 @@ function tick(){api('/api/status').then(function(s){
   Y.push({k:'Flash 剩余',v:s.flash_free!=null?s.flash_free+' KB':'—'});Y.push({k:'运行时长',v:dur(s.uptime)});
   Y.push({k:'SD 卡',v:s.sd?'已挂载':'未插入'});
   $('sysinfo').innerHTML=kvHtml(Y);
+  // 升级卡片标题右侧显示当前固件版本 —— 上传前能对照一眼，不用回头看上面那张表
+  $('f_fwcur').textContent=s.app?'当前 '+s.app:'';
   if(!s.sd){$('nosd').hidden=false;$('calbody').classList.add('off');}
   else{$('nosd').hidden=true;$('calbody').classList.remove('off');}
 }).catch(function(){})}
@@ -565,6 +650,30 @@ function loadData(){
   }).catch(function(e){toast(e.message,'bad')});
 }
 
+// 外部接口调用次数 —— 只显示"哪个接口调了几次"，不画趋势图。
+// 明细（含每次的调用时间）在设备的 SD 卡上按月分文件存，聚合由设备侧完成，
+// 这里拿到的已经是各接口的次数。
+function statsRender(j){
+  var box=$('apistats'),h=$('statshint');
+  var items=(j&&j.items)||[];
+  box.innerHTML=items.map(function(x){
+    return '<div class=strow><span class=nm>'+esc(x.name)+'</span>'
+      +(x.fail?'<span class=fl>失败 '+x.fail+'</span>':'')
+      +'<span class=n>'+x.n+'</span></div>'}).join('');
+  if(!j||!j.valid){
+    h.textContent=j&&!j.sd?'未检测到 SD 卡，调用记录无法保存。'
+      :'设备时间尚未校准，暂无可统计的记录。';
+  }else{
+    h.textContent='统计自 '+j.from+' 起，共 '+j.total+' 次。明细按月存于 SD 卡。';
+  }
+}
+function loadStats(){
+  busy('btnstats',true);
+  return api('/api/apistat?p='+$('stat_sel').value).then(statsRender)
+    .catch(function(e){toast(e.message,'bad')})
+    .then(function(){busy('btnstats',false)});
+}
+
 document.addEventListener('DOMContentLoaded', function(){
   pwbtn('p_toggle','f_pass');pwbtn('h_toggle','f_host');pwbtn('k_toggle','f_key');
   pwbtn('u_toggle','f_uapi');
@@ -578,7 +687,7 @@ document.addEventListener('DOMContentLoaded', function(){
     var n=b.dataset.t;document.querySelectorAll('.tab').forEach(function(x,i){
       x.classList.toggle('active',''+i==n)});
     document.querySelectorAll('.page').forEach(function(x,i){
-      x.classList.toggle('active',''+i==n)});if(n==4)setTimeout(loadData,100);
+      x.classList.toggle('active',''+i==n)});if(n==4){setTimeout(loadData,100);loadStats();}
   }});
   on('btnstat',function(){busy('btnstat',true);
     tick();loadPubip();setTimeout(function(){busy('btnstat',false)},600)});
@@ -645,6 +754,8 @@ document.addEventListener('DOMContentLoaded', function(){
     .then(function(){dirty=false;toast('日历已保存至 SD 卡','ok')})
     .catch(function(e){toast(e.message,'bad')}).then(function(){busy('btncal',false)})});
   $('range_sel').onchange=drawChart;
+  $('stat_sel').onchange=loadStats;
+  on('btnstats',loadStats);
   // ---- 数据导出：两种范围 ------------------------------------------
   // CSV 表头与设备侧 user_app.c 的 CSV_HEADER 保持一致。
   var CSV_HEAD='timestamp,indoor_temp,indoor_humi,outdoor_temp,outdoor_humi,weather,city,wifi_rssi';
@@ -688,19 +799,49 @@ document.addEventListener('DOMContentLoaded', function(){
   // ---- 固件升级（OTA） ---------------------------------------------
   // 用 XHR 而不是 fetch：只有 XHR 能报告**上传**进度（fetch 的 ReadableStream
   // 上传在多数浏览器仍不可用）。固件以 raw body 发送，设备边收边写 Flash。
-  $('f_fw').onchange=function(){
-    var f=this.files&&this.files[0];
+  // 选中 / 拖入固件后统一走这里：更新投放区的两行文字 + 解禁上传按钮。
+  // 进度条区（otabox）在**真正开始上传时**才显示 —— 之前一选文件就显示一个
+  // 空进度条 + "待上传文件：xxx"，和投放区里的文件名重复，还让人以为已经在传了。
+  function fwShow(f){
+    var d=$('fwdrop');
     busy('btnota',!f);
-    if(f)$('otamsg').textContent='待上传文件：'+f.name+'（'+fsize(f.size)+'）';
-    $('otabox').hidden=!f;
+    d.className='drop'+(f?' on':'');
+    $('f_fwname').textContent=f?f.name:'选择固件文件';
+    $('f_fwsize').textContent=f?fsize(f.size):'点击选择或拖入 rlcd_home.bin';
+    $('btnfwx').hidden=!f;
+    $('otabox').hidden=true;
     $('otabar').style.width='0';$('otabar').parentNode.className='bar';
-  };
+  }
+  $('f_fw').onchange=function(){fwShow(this.files&&this.files[0])};
+  // 移除按钮在 label 内部，不拦事件的话点它会冒泡到 label 又弹出文件选择框
+  $('btnfwx').addEventListener('click',function(e){
+    e.preventDefault();e.stopPropagation();
+    $('f_fw').value='';fwShow(null);
+  });
+  // 拖放：把 DataTransfer 的文件塞回 input，后续流程（校验/上传）与点选完全一致。
+  // dragover 必须 preventDefault，否则浏览器默认行为是"直接打开这个文件"。
+  (function(){
+    var d=$('fwdrop');
+    function stop(e){e.preventDefault();e.stopPropagation()}
+    ['dragenter','dragover'].forEach(function(n){d.addEventListener(n,function(e){
+      stop(e);d.classList.add('over')})});
+    ['dragleave','drop'].forEach(function(n){d.addEventListener(n,function(e){
+      stop(e);d.classList.remove('over')})});
+    d.addEventListener('drop',function(e){
+      var f=e.dataTransfer&&e.dataTransfer.files&&e.dataTransfer.files[0];
+      if(!f)return;
+      // DataTransfer 可直接赋给 input.files（现代浏览器均支持），这样
+      // btnota 里读 $('f_fw').files 的逻辑不用为拖放开第二条分支。
+      try{$('f_fw').files=e.dataTransfer.files}catch(err){}
+      fwShow(f);
+    });
+  })();
   on('btnota',function(){
     var f=$('f_fw').files&&$('f_fw').files[0];
     if(!f){toast('请先选择固件文件','bad');return}
     if(!/\.bin$/i.test(f.name)){toast('固件文件应为 .bin 格式','bad');return}
     if(!confirm('将向设备写入固件 '+f.name+'，完成后设备自动重启。是否继续？'))return;
-    busy('btnota',true);$('f_fw').disabled=true;$('otabox').hidden=false;
+    busy('btnota',true);$('fwdrop').classList.add('busy');$('otabox').hidden=false;
     var bar=$('otabar'),wrap=bar.parentNode,msg=$('otamsg');
     wrap.className='bar';bar.style.width='0';msg.textContent='正在上传 0%';
     // 上传期间停掉 5 秒状态轮询：设备侧 httpd 是**单任务串行**处理，ota_post
@@ -723,7 +864,7 @@ document.addEventListener('DOMContentLoaded', function(){
     };
     function fail(m){resumeTick();
       wrap.className='bar bad';msg.textContent=m;
-      toast(m,'bad');busy('btnota',false);$('f_fw').disabled=false}
+      toast(m,'bad');busy('btnota',false);$('fwdrop').classList.remove('busy')}
     x.onload=function(){
       var j={};try{j=JSON.parse(x.responseText)}catch(e){}
       if(x.status===200&&j.ok!==false){
@@ -758,7 +899,7 @@ document.addEventListener('DOMContentLoaded', function(){
   tick();tickTimer=setInterval(tick,5000);
   loadPubip();
   setTimeout(function(){var obs=new IntersectionObserver(function(es){es.forEach(function(e){
-    if(e.isIntersecting&&!rawRows){obs.disconnect();loadData();}
+    if(e.isIntersecting&&!rawRows){obs.disconnect();loadData();loadStats();}
   })});obs.observe($('cv'));},200);
   window.onbeforeunload=function(){if(dirty)return '日历有未保存的修改'};
 });</script>

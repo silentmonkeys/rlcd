@@ -107,6 +107,10 @@ color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:
 .btn:active{transform:translateY(1px)}
 .btn[disabled]{opacity:.5;cursor:progress}
 .btn.primary{background:var(--acc);border-color:var(--acc);color:#fff}
+/* primary 按钮禁用时不能只压 opacity —— 半透明的蓝在浅色背景上会变成一片
+   发白的淡紫，比正常态更抢眼，却又点不动。禁用态直接退成中性灰。 */
+.btn.primary[disabled]{opacity:1;cursor:not-allowed;background:var(--bg);
+border-color:var(--line);color:var(--mut)}
 .btn.danger{background:none;border-color:var(--err);color:var(--err)}
 .btn.sm{width:auto;margin:0;padding:7px 12px;font-size:13px;font-weight:500;flex:none}
 
@@ -158,13 +162,61 @@ color:var(--err);background:none;border:0;border-radius:5px;cursor:pointer}
 .dlrow .btn{margin-top:0}
 @media(max-width:420px){.dlrow{grid-template-columns:1fr}}
 
-/* 固件上传：文件选择框与其他输入框同高同风格 */
-input[type=file]{width:100%;height:38px;padding:6px 10px;font:inherit;font-size:13px;
-color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:7px;
-cursor:pointer}
-input[type=file]::file-selector-button{margin-right:10px;padding:4px 10px;font:inherit;
-font-size:12px;color:var(--fg);background:var(--card);border:1px solid var(--line);
-border-radius:5px;cursor:pointer}
+/* 固件上传区 —— **不用**原生 input[type=file] 的外观。
+   原生控件里"选择文件"按钮和文件名是浏览器自己排的：按钮高度、文字基线、两者
+   的垂直对齐都不受 CSS 控制，套上 height:38px 只会让内容在框里偏上/偏下。
+
+   上一版改成「label 当按钮 + span 显示文件名」仍然违和，两个原因：
+     * 一个 38px 高、带边框圆角的横条，长得和上面那些输入框一模一样 —— 看着
+       像能输入，其实只能点；
+     * "选择文件"的底色是 var(--card)，和卡片同色，读起来不像按钮，只像一段
+       浮着的文字加一条分隔线。
+   现在整块就是**一个可点击区域**（label 包住隐藏的 input），虚线边框明确表示
+   "这是投放/选择文件的地方"而非输入框，同时接受拖放。
+
+   这一版把它从"居中大方块"压成**一行**：原来 80px 高的居中投放区 + 下面同宽的
+   整宽主按钮，视觉上是上下两个大色块，中间夹小字，节奏很乱。改成
+   「图标 + 左对齐两行文字 + 右侧移除按钮」的横向一行后，高度和上面的输入框、
+   下面的按钮同一量级，卡片内部才有统一的行高节奏。虚线边框保留 —— 它是
+   "这里不是输入框"的唯一视觉线索。 */
+.drop{position:relative;display:flex;align-items:center;gap:10px;margin-top:10px;
+padding:9px 10px;text-align:left;cursor:pointer;background:var(--bg);
+border:1px dashed var(--line);border-radius:8px;
+transition:border-color .15s,background .15s}
+/* input 视觉隐藏但仍在 label 内 —— 键盘可聚焦，无障碍不丢 */
+.drop input[type=file]{position:absolute;left:0;top:0;width:1px;height:1px;opacity:0}
+.drop:hover,.drop.over{border-color:var(--acc);background:var(--card)}
+.drop.over{border-style:solid}
+.drop:focus-within{outline:2px solid var(--acc);outline-offset:-1px}
+/* 图标同样用 SVG mask 画线稿（与 .pwbtn / .lock 一致，不用 emoji）：
+   未选文件是"上传"箭头，选了文件换成文档图标并转成强调色。 */
+.drop::before{content:'';flex:none;width:20px;height:20px;background-color:var(--mut);
+-webkit-mask:var(--ico) center/20px 20px no-repeat;
+mask:var(--ico) center/20px 20px no-repeat;
+--ico:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4'/%3E%3Cpolyline points='17 8 12 3 7 8'/%3E%3Cline x1='12' y1='3' x2='12' y2='15'/%3E%3C/svg%3E")}
+.drop.on::before{background-color:var(--acc);
+--ico:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z'/%3E%3Cpolyline points='14 2 14 8 20 8'/%3E%3C/svg%3E")}
+.drop.on{border-style:solid;border-color:var(--acc)}
+/* 上传中：整块不可点，避免中途换文件 */
+.drop.busy{pointer-events:none;opacity:.55}
+.drop .dtx{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
+.drop .t1{font-size:13px;font-weight:600;color:var(--fg);overflow-wrap:anywhere;
+line-height:1.35}
+.drop .t2{font-size:11px;color:var(--mut);font-variant-numeric:tabular-nums;
+line-height:1.35}
+/* 移除按钮在 label 内部，点它会冒泡到 label 再打开文件框 —— app.js 里
+   stopPropagation + preventDefault 拦掉 */
+.drop .dx{flex:none;width:22px;height:22px;padding:0;font-size:15px;line-height:1;
+color:var(--mut);cursor:pointer;background:none;border:0;border-radius:6px}
+.drop .dx:hover{color:var(--err);background:var(--line)}
+
+/* 接口调用统计：一行一个接口，右侧对齐次数 —— 只看次数，不画折线图 */
+.strow{display:flex;align-items:center;gap:8px;background:var(--bg);border-radius:7px;
+padding:8px 10px;margin:6px 0}
+.strow .nm{flex:1;min-width:0;overflow-wrap:anywhere}
+.strow .fl{flex:none;font-size:11px;color:var(--err)}
+.strow .n{flex:none;font-size:16px;font-weight:600;font-variant-numeric:tabular-nums}
+
 code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;
 background:var(--bg);padding:1px 5px;border-radius:4px}
 

@@ -141,6 +141,18 @@ MOCK = r"""
     labels:["今天也要加油","保持好心情","新的一天新的开始"]};
   var SCAN={ok:true,aps:[{ssid:"MyHome_2.4G",rssi:-48,auth:true},
     {ssid:"Neighbor_WiFi",rssi:-72,auth:true},{ssid:"Guest_Free",rssi:-85,auth:false}]};
+  /* 接口调用统计：次数随所选窗口缩放，看得出 day < week < month < year */
+  function apistat(u){
+    var p=(String(u).split("p=")[1]||"month");
+    var k={day:1,week:6,month:26,year:300}[p]||26;
+    return {ok:true,valid:true,sd:true,
+      from:{day:"2026-08-08",week:"2026-08-03",month:"2026-08-01",year:"2026-01-01"}[p],
+      items:[{name:"和风天气 · 城市解析",n:1*k,fail:0},
+             {name:"和风天气 · 实况",n:6*k,fail:Math.floor(k/9)},
+             {name:"和风天气 · 每日预报",n:1*k,fail:0},
+             {name:"UAPI · 公网 IP 定位",n:1*k,fail:0}],
+      total:9*k};
+  }
   function csv(){
     var h="timestamp,indoor_temp,indoor_humi,outdoor_temp,outdoor_humi,weather,city,wifi_rssi\n";
     var rows=[],now=Date.now();
@@ -163,6 +175,7 @@ MOCK = r"""
     if(u==='/api/scan')     return J(SCAN);
     if(u==='/api/config')   return post?J({ok:true}):J(CONFIG);
     if(u==='/api/pubip')    return J(PUBIP);
+    if(String(u).indexOf('/api/apistat')===0) return J(apistat(u));
     if(u==='/api/calendar') return post?J({ok:true}):J(CAL);
     if(u==='/api/data/csv') return Promise.resolve({ok:true,status:200,
       text:function(){return Promise.resolve(csv())},

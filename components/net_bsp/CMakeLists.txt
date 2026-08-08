@@ -7,6 +7,7 @@ idf_component_register(
          "src/net_uapi.c"
          "src/net_calendar.c"
          "src/net_ota.c"
+         "src/net_apistat.c"
     INCLUDE_DIRS "include"
     # user_config.h 目前放在 main/，通过 PRIV_INCLUDE_DIRS 直接引用而不 REQUIRES main
     # ——避免和 port_bsp（后者 PRIV_REQUIRES net_bsp 供长按刷天气用）形成

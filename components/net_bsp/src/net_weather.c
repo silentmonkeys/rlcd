@@ -32,15 +32,23 @@
 
 // 拉一次 QWeather 端点，返回 malloc 的明文 body（caller free）。
 // HTTP GET → 按需 gzip 解压 → 校验 v7 响应外壳 `code=="200"`。失败返回 NULL。
-static char *wx_fetch(const char *url)
+//
+// id 只用于调用统计（NetBsp_ApiCallRecord，记 SD）。**每次进入本函数都记一条**，
+// 包括连不上的那些 —— 统计要回答的是"设备往外打了多少次"，而失败次数单列在
+// fail 里；只记成功的话，限流/凭据错时统计会显示"几乎没调用"，正好和实际相反。
+static char *wx_fetch(const char *url, api_call_id_t id)
 {
     net_http_req_t io = { .timeout_ms = WX_HTTP_TIMEOUT_MS };
     size_t body_len = 0;
     char *body = net_http_get_text(url, &io, &body_len);
-    if (!body) return NULL;
+    if (!body) {
+        NetBsp_ApiCallRecord(id, false);
+        return NULL;
+    }
     if (io.status != 200) {
         ESP_LOGW(NET_TAG, "qweather HTTP %d for %.60s", io.status, url);
         free(body);
+        NetBsp_ApiCallRecord(id, false);
         return NULL;
     }
 
@@ -48,9 +56,11 @@ static char *wx_fetch(const char *url)
     if (!wx_json_str(body, "code", code, sizeof(code)) || strcmp(code, "200") != 0) {
         ESP_LOGW(NET_TAG, "qweather code=%s body=%.80s", code[0] ? code : "?", body);
         free(body);
+        NetBsp_ApiCallRecord(id, false);
         return NULL;
     }
     (void)body_len;
+    NetBsp_ApiCallRecord(id, true);
     return body;
 }
 
@@ -74,7 +84,7 @@ static bool wx_geo_lookup(const char *host, const char *apikey,
     snprintf(url, sizeof(url), "https://%s/geo/v2/city/lookup?location=%s&key=%s",
              host, enc, apikey);
 
-    char *body = wx_fetch(url);
+    char *body = wx_fetch(url, API_CALL_QWEATHER_GEO);
     if (!body) return false;
 
     // 定位到 "location":[{  开头，然后从这个对象里抓字段。
@@ -101,7 +111,7 @@ static bool wx_fetch_now(const char *host, const char *apikey,
     char url[WX_URL_MAX];
     snprintf(url, sizeof(url), "https://%s/v7/weather/now?location=%s&key=%s",
              host, city->id, apikey);
-    char *body = wx_fetch(url);
+    char *body = wx_fetch(url, API_CALL_QWEATHER_NOW);
     if (!body) return false;
 
     char v[32];
@@ -136,7 +146,7 @@ static bool wx_fetch_daily(const char *host, const char *apikey,
     char url[WX_URL_MAX];
     snprintf(url, sizeof(url), "https://%s/v7/weather/3d?location=%s&key=%s",
              host, city->id, apikey);
-    char *body = wx_fetch(url);
+    char *body = wx_fetch(url, API_CALL_QWEATHER_DAILY);
     if (!body) return false;
 
     // json_get 用 strstr 找第一个 "<key>" —— daily[0] 在数组首位，抓到的就是今天。

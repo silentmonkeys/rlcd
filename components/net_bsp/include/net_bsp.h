@@ -32,6 +32,42 @@ typedef struct {
     int  retry_after_s;         // 429 时服务端给的 Retry-After 秒数，否则 0
 } uapi_myip_t;
 
+// -------- 外部接口调用统计 ----------------------------------------
+// 每次往外打 API 都记一行到 SD（/sdcard/rlcd/api/YYYY-MM.csv，含调用时间），
+// 门户「数据」页按自然日/周/月/年聚合出次数。加接口 = 这里加一个枚举 +
+// net_apistat.c 的 API_TABLE 加一行。
+typedef enum {
+    API_CALL_QWEATHER_GEO = 0,   // QWeather GeoAPI 城市解析
+    API_CALL_QWEATHER_NOW,       // QWeather 实况
+    API_CALL_QWEATHER_DAILY,     // QWeather 每日预报
+    API_CALL_UAPI_MYIP,          // UAPI /network/myip 公网 IP 定位
+    API_CALL_COUNT
+} api_call_id_t;
+
+// 聚合窗口 —— 自然周期（本月 = 1 号至今），与服务商配额的重置口径一致
+typedef enum {
+    API_PERIOD_DAY = 0,
+    API_PERIOD_WEEK,             // 周一为一周之始
+    API_PERIOD_MONTH,
+    API_PERIOD_YEAR
+} api_period_t;
+
+typedef struct {
+    unsigned count[API_CALL_COUNT];   // 各接口调用总次数
+    unsigned fail[API_CALL_COUNT];    // 其中失败次数
+    int from_year, from_month, from_day;   // 窗口起点（本地时间）
+} api_stat_t;
+
+// 记录一次调用。SD 未挂载 / 系统时间未校准时静默丢弃，绝不阻塞调用方。
+void NetBsp_ApiCallRecord(api_call_id_t id, bool ok);
+
+// 聚合查询。SD 未挂载 / 未校时返回 false（out 已清零）。
+bool NetBsp_ApiStatQuery(api_period_t period, api_stat_t *out);
+
+// 接口的中文显示名 / CSV 里的 ASCII key
+const char *NetBsp_ApiCallName(api_call_id_t id);
+const char *NetBsp_ApiCallKey(api_call_id_t id);
+
 // -------- 生命周期 -----------------------------------------------
 // 启动网络后台：
 //   - 若 NVS 有 ssid：起 STA，连接成功后开始每 10min 拉一次天气；

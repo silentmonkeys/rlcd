@@ -125,17 +125,35 @@
 <button class='btn primary' id=btndl>导出完整记录</button>
 </div>
 <p class=hint id=dlhint>「当前图表数据」仅包含图表所选时间范围内的记录；「完整记录」包含 SD 卡内的全部历史数据。</p>
+</div>
+<div class=card><div class=cardhd><b>外部接口调用次数</b>
+<select id=stat_sel class=auto>
+<option value=day>今日</option>
+<option value=week>本周</option>
+<option value=month selected>本月</option>
+<option value=year>本年</option>
+</select>
+<button class='btn sm' id=btnstats>刷新</button></div>
+<div id=apistats class=list></div>
+<p class=hint id=statshint>每次调用的时间都记录在 SD 卡，按月分文件存储。</p>
 </div></section>
 
 <section class=page id=p5>
 <div class=card><div class=grid id=sysinfo></div></div>
-<div class=card><b>固件升级</b>
-<p class=hint>选择编译生成的 <code>rlcd_home.bin</code> 固件文件。升级过程中请勿断电或断开网络。</p>
-<div class=inwrap><input type=file id=f_fw accept=.bin></div>
+<div class=card><div class=cardhd><b>固件升级</b>
+<span class=cnt id=f_fwcur></span></div>
+<label class=drop id=fwdrop>
+<input type=file id=f_fw accept=.bin>
+<span class=dtx>
+<span class=t1 id=f_fwname>选择固件文件</span>
+<span class=t2 id=f_fwsize>点击选择或拖入 rlcd_home.bin</span>
+</span>
+<button type=button class=dx id=btnfwx hidden aria-label=移除所选文件>×</button>
+</label>
 <div id=otabox hidden><div class=bar><i id=otabar></i></div>
 <p class=hint id=otamsg>准备中</p></div>
 <button class='btn primary' id=btnota disabled>上传并升级</button>
-<p class=warn>升级完成后设备将自动重启，约 15 秒后重新上线。</p>
+<p class=warn>升级过程中请勿断电或断开网络；完成后设备自动重启，约 15 秒后重新上线。</p>
 </div>
 <div class=card><b>维护操作</b>
 <button class=btn id=btnreboot>重启设备</button>
