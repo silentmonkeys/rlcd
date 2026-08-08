@@ -145,7 +145,7 @@ static void wifi_draw(lv_obj_t *parent, int x, int y, int8_t rssi, bool connecte
 
 // ─── 内部：电池绘制到容器 ─────────────────────────────────────────
 // 更新 bar 的 batt_fill / batt_warn 字段
-static void battery_draw(lv_obj_t *parent, int x, int y, int percent, bool charging,
+static void battery_draw(lv_obj_t *parent, int x, int y, int percent,
                          ui_status_bar_t *bar)
 {
     ui_rounded_frame(parent, x, y, 40, 18, 4, 2);
@@ -178,23 +178,13 @@ static void battery_draw(lv_obj_t *parent, int x, int y, int percent, bool charg
         lv_obj_t *warn = ui_pixel_rect(parent, x + 2, y + 18, 36, 2);
         bar->batt_warn = warn;
     }
-
-    // 充电闪电
-    if (charging && segs > 0) {
-        int lx = x + 14, ly = y + 5;
-        ui_pixel_rect(parent, lx + 4, ly,     4, 2);
-        ui_pixel_rect(parent, lx + 2, ly + 2, 4, 2);
-        ui_pixel_rect(parent, lx,     ly + 4, 4, 2);
-        ui_pixel_rect(parent, lx + 2, ly + 6, 4, 2);
-        ui_pixel_rect(parent, lx + 4, ly + 8, 4, 2);
-    }
 }
 
 // ─── 状态栏 ───────────────────────────────────────────────────────
 
 ui_status_bar_t *ui_status_bar_create(lv_obj_t *parent,
                                       int8_t rssi, bool connected,
-                                      int percent, bool charging)
+                                      int percent)
 {
     ui_status_bar_t *bar = calloc(1, sizeof(ui_status_bar_t));
     if (!bar) return NULL;
@@ -207,20 +197,20 @@ ui_status_bar_t *ui_status_bar_create(lv_obj_t *parent,
     lv_obj_set_style_border_width(bar->root, 0, 0);
 
     wifi_draw(bar->root, WIFI_ICON_X, 0, rssi, connected);
-    battery_draw(bar->root, BATT_ICON_X, 2, percent, charging, bar);
+    battery_draw(bar->root, BATT_ICON_X, 2, percent, bar);
     return bar;
 }
 
 void ui_status_bar_update(ui_status_bar_t *bar,
                           int8_t rssi, bool connected,
-                          int percent, bool charging)
+                          int percent)
 {
     if (!bar || !bar->root) return;
     lv_obj_clean(bar->root);
     bar->batt_fill = NULL;
     bar->batt_warn = NULL;
     wifi_draw(bar->root, WIFI_ICON_X, 0, rssi, connected);
-    battery_draw(bar->root, BATT_ICON_X, 2, percent, charging, bar);
+    battery_draw(bar->root, BATT_ICON_X, 2, percent, bar);
 }
 
 void ui_status_bar_destroy(ui_status_bar_t *bar)
@@ -255,7 +245,7 @@ ui_status_bar_t *ui_page_create_scaffold(lv_obj_t *parent,
                                          const char *title,
                                          int page_index,
                                          int8_t rssi, bool connected,
-                                         int percent, bool charging)
+                                         int percent)
 {
     ui_apply_mono_bg(parent);
 
@@ -265,7 +255,7 @@ ui_status_bar_t *ui_page_create_scaffold(lv_obj_t *parent,
     lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_CENTER, 0);
 
     // 状态栏
-    ui_status_bar_t *bar = ui_status_bar_create(parent, rssi, connected, percent, charging);
+    ui_status_bar_t *bar = ui_status_bar_create(parent, rssi, connected, percent);
 
     // 底部横线 + 导航点
     ui_pixel_rect(parent, 9, BOTTOM_LINE_Y, 378, 2);

@@ -48,3 +48,31 @@ python3 tools/gen_weather_icons.py
 运行时由 `ui_weather_icon.c` 的 `ui_weather_icon_load(img, code)` 按
 `weather_code` 二分查索引 → 读数据 → 拼 `lv_image_dsc_t`（`LV_COLOR_FORMAT_I1`），
 找不到代码时回落 999（未知图标）。
+
+## binfo.py — 读 .bin 里的版本信息
+
+不用烧板子、不用翻 `build/*.json`，直接从二进制里把版本读出来。发 Release
+前核对"这个 bin 到底是哪一版、字库对不对"用这个。
+
+```sh
+python3 tools/binfo.py build/rlcd_home.bin        # 应用镜像
+python3 tools/binfo.py build/*.bin                # 一次看多个
+python3 tools/binfo.py -j build/rlcd_home.bin     # JSON，给脚本用
+python3 tools/binfo.py --diff a_full.bin b_full.bin   # 两版逐项对比
+```
+
+自动判类型（判错时用 `-t app|full|spiffs|otadata` 强制）：
+
+| 类型        | 典型文件                             | 读出什么                                                                       |
+| ----------- | ------------------------------------ | ------------------------------------------------------------------------------ |
+| `app`     | `rlcd_home.bin`（OTA 上传的）      | 版本 / 项目名 / 编译时间 / IDF 版本 / ELF SHA256 / 芯片，并校验镜像尾部 SHA256 |
+| `full`    | `rlcd_home_*_full.bin`             | 解分区表 → 每个 app 槽各一份版本 + otadata 启动槽 + fonts 分区内容            |
+| `spiffs`  | `fonts.bin`                        | 列字库文件；binfont 读字号/bpp/字数，`ui_font_weather_40.bin` 读图标数       |
+| `otadata` | `ota_data_initial.bin` 或设备 dump | 两槽 ota_seq / 状态（`PENDING_VERIFY` 等）/ CRC，算出生效槽                  |
+
+**`full.bin` 那条最有用**：`fonts` 分区不走 OTA，改过字库的版本必须整片重烧
+（见 `.github/release_notes.md`）。发布前 `--diff` 一下新旧 `full.bin`，
+如果 `fonts.*` 行有差异，说明这版**不能只 OTA**。字数对不上也能立刻发现
+——`ui_font_cjk_16.bin` 应该是 7597 字，明显偏小就是 `gen_font.sh` 的字符集被改坏了。
+
+解析全部是纯 `struct` 读字节，不依赖 esptool / ESP-IDF 环境，只用标准库。

@@ -75,7 +75,7 @@ snprintf(buf, sizeof(buf), "%d℃", (int)roundf(m->indoor_temp));
 ## 状态栏规则
 
 - WiFi：connected=false → 满信号 + "\" 划掉；rssi 分 -55/-65/-75 dBm 三档画弧
-- 电池：percent 分 4 档画段（25/50/75）；≤10% 画警示下划线；charging 画闪电
+- 电池：percent 分 4 档画段（25/50/75）；≤10% 画警示下划线
 - 页码点：`ui_draw_page_dots(scr, my_index, y, r, spacing)`，总数按 ap_active 取 5/4
 
 ## 加新页面

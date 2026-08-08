@@ -256,7 +256,7 @@ lv_obj_t *ui_calendar_create(void)
     lv_obj_set_style_text_align(title, LV_TEXT_ALIGN_CENTER, 0);
 
     s_bar = ui_status_bar_create(s_screen, m->wifi_rssi, m->wifi_connected,
-                                  m->battery_percent, m->battery_charging);
+                                  m->battery_percent);
     // 底部横线 + 导航点（scaffold 不做是因为标题要复用）
     ui_pixel_rect(s_screen, 9, 278, 378, 2);
     ui_draw_page_dots(s_screen, 2, 291, 3, 14);
@@ -307,7 +307,7 @@ void ui_calendar_apply_locked(void)
 
     // 状态栏动态刷新
     ui_status_bar_update(s_bar, m->wifi_rssi, m->wifi_connected,
-                          m->battery_percent, m->battery_charging);
+                          m->battery_percent);
 
     int year = m->year;
     int month = m->month;

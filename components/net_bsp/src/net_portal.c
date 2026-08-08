@@ -443,7 +443,6 @@ static esp_err_t status_get(httpd_req_t *req)
     jw_kv_f   (&w, "humi", m->indoor_humi, 0);
     // 电池
     jw_kv_int (&w, "batt", m->battery_percent);
-    jw_kv_bool(&w, "charging", m->battery_charging);
     // 天气
     jw_kv_str (&w, "city",  m->city);
     jw_kv_str (&w, "wtext", m->weather_text);

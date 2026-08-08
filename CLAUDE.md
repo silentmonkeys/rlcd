@@ -31,7 +31,7 @@ cd simulator && cmake -B build && cmake --build build -j
 键（窗口模式）：`ESC` `S` 存帧 / `+ -` 缩放。
 
 模拟器同时监听 TCP `127.0.0.1:9000`，协议是**字段表驱动**的：字段表在
-`simulator/sim_console.c` 的 `FIELDS[]`（48 个），**加字段只改两处** ——
+`simulator/sim_console.c` 的 `FIELDS[]`（47 个），**加字段只改两处** ——
 `FIELDS[]` 加一行 `FLD(...)` + `sim_console.h` 加一个 `OVR_*` 位
 （`set`/`get`/`dump`/`help` 全部自动跟上）。每条命令的响应后会再发一个
 **空行作为帧终止**，客户端据此判断读完。`sim_tick_data()` 500ms 一拍，
@@ -72,7 +72,7 @@ GUI 客户端见 [tools/rlcd_debug_gui/README.md](tools/rlcd_debug_gui/README.md
 - **app_bsp** — LVGL v9 端口：tick 定时器、任务 handler、互斥（Lvgl_lock/unlock）。
 - **ui** — 共享 UI。`ui_home_create()` 建树；其他任务写 `ui_model_get()` 后调 `ui_home_request_refresh()` 或 `ui_home_apply_locked()`。
 - **net_bsp** — WiFi STA/SoftAP、HTTP 配网门户、NVS 持久化、天气拉取（**QWeather** 单一 provider）。按职责拆为多文件：`net_bsp.c`（入口 + 共享状态 + NVS + 看门狗）/ `net_wifi.c`（WiFi 事件 + SNTP）/ `net_portal.c`（管理门户：静态资源 + JSON API）/ `net_http.c`（**共享** HTTPS GET + gzip 解压 + 轻量 JSON 取值，QWeather 与 UAPI 共用）/ `net_weather.c`（QWeather API）/ `net_uapi.c`（**UAPI uapis.cn** `/network/myip`：公网 IP + 自动城市）/ `net_apistat.c`（**外部接口调用统计**，明细存 SD 按月分文件）/ `net_calendar.c`（日历存 SD，原子写）/ `net_ota.c`（`POST /api/ota` 流式接收固件写备用 app 槽）/ `net_internal.h`（组件内共享声明）。对外 API 仍只在 `net_bsp.h`。门户前端**权威源码在 `components/net_bsp/portal/`**（index.html / style.css / app.js），改完必须跑 `python3 tools/gen_portal.py` 重新生成 `src/portal_assets.h`（gzip 字节数组，勿手改）+ `simulator/portal_preview.html`（带 mock，浏览器直接打开可预览）。
-- **user_app** — 传感器 / 电池 ADC 初始化 + 1Hz tick 任务把读数写入 ui_model（温湿度每秒；电量、充电趋势、SD 探活、无网看门狗共用 5s 慢节拍）；独立 CSV 日志任务（fsync 落盘）。RTC 待硬件到货再接。
+- **user_app** — 传感器 / 电池 ADC 初始化 + 1Hz tick 任务把读数写入 ui_model（温湿度每秒；电量、SD 探活、无网看门狗共用 5s 慢节拍）；独立 CSV 日志任务（fsync 落盘）。RTC 待硬件到货再接。
 
 ## 后台任务与节拍
 
@@ -152,7 +152,7 @@ GUI 客户端见 [tools/rlcd_debug_gui/README.md](tools/rlcd_debug_gui/README.md
 ## 状态栏显示规则
 
 - **WiFi**：connected=false → 满信号 + "\" 划掉；rssi ≥ -55 → 3 弧；-65 → 2 弧；-75 → 1 弧；<-75 → 仅圆点。
-- **电池**：percent 分 4 档（25/50/75）段数；≤10% 加警示下划线；charging=true 画闪电。数据来自 `adc_bsp` 实测电压（3.0V→0% / 4.12V→100%），charging 由 user_app 的电压趋势启发式推断（无充电检测引脚）。
+- **电池**：percent 分 4 档（25/50/75）段数；≤10% 加警示下划线。数据来自 `adc_bsp` 实测电压（3.0V→0% / 4.12V→100%）。硬件无充电检测引脚，**不做充电状态显示**。
 
 ## 字体
 

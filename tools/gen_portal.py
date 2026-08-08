@@ -125,7 +125,7 @@ MOCK = r"""
    自动生成，改 mock 请改 tools/gen_portal.py */
 (function(){
   var STATUS={ok:true,wifi:true,rssi:-48,ip:"192.168.1.87",ssid:"MyHome_2.4G",
-    temp:24.6,humi:58,batt:92,charging:true,city:"北京市",wtext:"多云转晴",wupd:"16:42",
+    temp:24.6,humi:58,batt:92,city:"北京市",wtext:"多云转晴",wupd:"16:42",
     otemp:31.2,ohumi:44,feels:33.5,tmin:25,tmax:32,wind:"东北 12 km/h",
     sd:true,sd_used:124,sd_total:15200,uptime:39472,heap:148,
     chip:"ESP32-S3",app:"RLCD-Home 0.1",idf:"v6.0.1",mac:"84:F7:03:6C:AA:BB",flash_free:2048};

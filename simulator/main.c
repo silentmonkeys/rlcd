@@ -199,7 +199,6 @@ static void sim_tick_data(void)
     if (!(ovr & OVR_WIFI_CONN)) m->wifi_connected  = false;
     if (!(ovr & OVR_WIFI_RSSI))  m->wifi_rssi       = 0;
     if (!(ovr & OVR_BAT_PCT))    m->battery_percent = 80;
-    if (!(ovr & OVR_BAT_CHG))    m->battery_charging = false;
 
     // --- 设备信息页假数据（真机由 net_bsp / esp_chip_info 填） -------
     // 这些字段不随时间变化，但每帧按 override 位重填 —— 这样 GUI 的

@@ -132,7 +132,7 @@ lv_obj_t *ui_device_create(void)
     const ui_model_t *m = ui_model_get();
     s_bar = ui_page_create_scaffold(s_screen, "系统信息", 3,
                                     m->wifi_rssi, m->wifi_connected,
-                                    m->battery_percent, m->battery_charging);
+                                    m->battery_percent);
 
     int x1 = CARD_X0;
     int x2 = x1 + CARD_W + CARD_GAP_X;
@@ -182,7 +182,7 @@ void ui_device_apply_locked(void)
 
     // 状态栏动态刷新
     ui_status_bar_update(s_bar, m->wifi_rssi, m->wifi_connected,
-                          m->battery_percent, m->battery_charging);
+                          m->battery_percent);
 
     // 左上 - 网络
     // 未连接 STA 时，IP/SSID 显示本机 SoftAP 的信息（RLCD-Setup / 192.168.4.1）

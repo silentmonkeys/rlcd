@@ -1,7 +1,7 @@
 // user_app —— 把系统里的“数据源”（时钟、温湿度、电量）挂到 ui_model。
 //
-// 目前：SHTC3 提供真实的室内温湿度；电池电量由 ADC1_CH3(GPIO4) 实测，充电状态
-// 用电压趋势启发式推断；时间走系统本地时钟（SNTP 校时，RTC 待硬件到货再接）。
+// 目前：SHTC3 提供真实的室内温湿度；电池电量由 ADC1_CH3(GPIO4) 实测；
+// 时间走系统本地时钟（SNTP 校时，RTC 待硬件到货再接）。
 // 参考实现见 02_ESP-IDF/05_I2C_SHTC3、03_ADC_Test。
 
 #include "user_app.h"
@@ -142,54 +142,30 @@ static void refresh_dynamic_device_info(ui_model_t *m)
     m->flash_free_kb = s_flash_free_kb;
 }
 
-// ------------ 电池采样 + 充电趋势推断 --------------------------------
-// 硬件只能测电压（无充电检测引脚），用电压趋势启发式判充电：
-//   连续 CHARGE_CONFIRM 次采样净上升 > CHARGE_STEP_V → 判为充电中；
-//   出现一次明显下降 → 立即清除充电态。
-// 采样有噪声（ADC 侧已做 8 次均值滤波，见 adc_bsp.c），阈值仍取得保守
-//（20mV / 连续 3 次），宁可漏报不误报。
+// ------------ 电池采样 ------------------------------------------------
+// 硬件只能测电压（无充电检测引脚，本开发套件无法实现充电检测）。
+// 采样有噪声，ADC 侧已做 8 次均值滤波，见 adc_bsp.c。
 //
-// 采样本身（ADC IO）在 LVGL 锁**外**做，结果存到这两个缓存里；锁内只赋值。
-#define CHARGE_STEP_V     0.02f
-#define CHARGE_CONFIRM    3
+// 采样本身（ADC IO）在 LVGL 锁**外**做，结果存到缓存里；锁内只赋值。
+static bool s_adc_ok = false;
 
-static bool  s_adc_ok = false;
-static float s_last_vbat = 0.0f;
-static int   s_rise_streak = 0;
+static uint8_t s_batt_pct_cache = 80;          // ADC 不可用时的占位值
 
-static uint8_t s_batt_pct_cache      = 80;     // ADC 不可用时的占位值
-static bool    s_batt_charging_cache = false;
-
-// 锁外：读一次电压 → 更新百分比 + 充电趋势缓存
+// 锁外：读一次电压 → 更新百分比缓存
 static void sample_battery_unlocked(void)
 {
     if (!s_adc_ok) return;   // 保持占位值，避免状态栏画出 0%
 
-    // 一次采样同时用于百分比和趋势判断 —— 不要分别调 Voltage/Level，
-    // 那会走两轮 ADC，两个读数还可能落在噪声的不同侧。
     float vbat = Adc_GetBatteryVoltage();
     if (vbat <= 0.0f) return;               // 采样失败：这一轮什么都不改
 
     s_batt_pct_cache = Adc_LevelFromVoltage(vbat);
-
-    if (s_last_vbat > 0.0f) {
-        if (vbat > s_last_vbat + CHARGE_STEP_V) {
-            if (s_rise_streak < CHARGE_CONFIRM) s_rise_streak++;
-        } else if (vbat < s_last_vbat - CHARGE_STEP_V) {
-            s_rise_streak = 0;                 // 明显下降 → 放电
-            s_batt_charging_cache = false;
-        }
-        // 介于两阈值之间：维持当前判断（平台期）
-        if (s_rise_streak >= CHARGE_CONFIRM) s_batt_charging_cache = true;
-    }
-    s_last_vbat = vbat;
 }
 
 // 锁内：只做赋值，无 IO
 static void apply_battery_locked(ui_model_t *m)
 {
-    m->battery_percent  = s_batt_pct_cache;
-    m->battery_charging = s_adc_ok ? s_batt_charging_cache : false;
+    m->battery_percent = s_batt_pct_cache;
 }
 
 static void tick_task(void *arg)

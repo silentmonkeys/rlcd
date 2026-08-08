@@ -107,7 +107,6 @@ FIELD_GROUPS = [
         F("wifi_connected",   "WiFi 已连接", "b"),
         F("wifi_rssi",        "WiFi 信号",   "i", -100, 0, 1, "dBm"),
         F("battery_percent",  "电池电量",    "i", 0, 100, 1, "%"),
-        F("battery_charging", "充电中",      "b"),
     ]),
     ("设备信息页", [
         F("ip",            "IP",       "s"),
@@ -210,10 +209,7 @@ SCENES = [
         ("wifi_connected", "true"), ("wifi_rssi", -42),
     ]),
     ("低电量告警", [
-        ("battery_percent", 8), ("battery_charging", "false"),
-    ]),
-    ("充电中", [
-        ("battery_percent", 46), ("battery_charging", "true"),
+        ("battery_percent", 8),
     ]),
     ("无数据（哨兵）", [
         ("indoor_temp", "nan"), ("indoor_humi", "nan"), ("outdoor_temp", "nan"),

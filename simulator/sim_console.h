@@ -52,7 +52,6 @@ extern "C" {
 #define OVR_WIFI_CONN     (1ull << 6)
 #define OVR_WIFI_RSSI     (1ull << 7)
 #define OVR_BAT_PCT       (1ull << 8)
-#define OVR_BAT_CHG       (1ull << 9)
 #define OVR_FEELS_LIKE    (1ull << 10)
 #define OVR_OUTDOOR_HUMI  (1ull << 11)
 #define OVR_WIND_SPD      (1ull << 12)

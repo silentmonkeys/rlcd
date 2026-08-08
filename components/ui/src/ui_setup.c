@@ -88,7 +88,7 @@ lv_obj_t *ui_setup_create(void)
     const ui_model_t *m = ui_model_get();
     s_bar = ui_page_create_scaffold(s_screen, "配网提示", 4,
                                     m->wifi_rssi, m->wifi_connected,
-                                    m->battery_percent, m->battery_charging);
+                                    m->battery_percent);
 
     // 中央大 WiFi 图标 + 禁止斜杠
     draw_wifi_no_net(s_screen, ICON_CX, ICON_TOP_Y);
@@ -124,7 +124,7 @@ void ui_setup_apply_locked(void)
 
     // 状态栏动态刷新
     ui_status_bar_update(s_bar, m->wifi_rssi, m->wifi_connected,
-                          m->battery_percent, m->battery_charging);
+                          m->battery_percent);
 
     if (m->ap_ssid[0]) lv_label_set_text(lbl_ap_ssid, m->ap_ssid);
     else               lv_label_set_text(lbl_ap_ssid, "RLCD-Setup");

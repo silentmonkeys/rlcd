@@ -44,12 +44,12 @@ typedef struct {
 // 创建状态栏（parent 是 screen）。返回结构体（在堆上，页面持有指针）
 ui_status_bar_t *ui_status_bar_create(lv_obj_t *parent,
                                       int8_t rssi, bool connected,
-                                      int percent, bool charging);
+                                      int percent);
 
 // 更新状态栏（根据最新 model 值重绘）
 void ui_status_bar_update(ui_status_bar_t *bar,
                           int8_t rssi, bool connected,
-                          int percent, bool charging);
+                          int percent);
 
 // 销毁状态栏（页面销毁时调用）
 void ui_status_bar_destroy(ui_status_bar_t *bar);
@@ -65,7 +65,7 @@ ui_status_bar_t *ui_page_create_scaffold(lv_obj_t *parent,
                                          const char *title,
                                          int page_index,
                                          int8_t rssi, bool connected,
-                                         int percent, bool charging);
+                                         int percent);
 
 #ifdef __cplusplus
 }

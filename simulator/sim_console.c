@@ -168,7 +168,6 @@ static const field_desc_t FIELDS[] = {
     FLD("wifi_connected",   FT_BOOL, wifi_connected,   OVR_WIFI_CONN),
     FLD("wifi_rssi",        FT_I8,   wifi_rssi,        OVR_WIFI_RSSI),
     FLD("battery_percent",  FT_U8,   battery_percent,  OVR_BAT_PCT),
-    FLD("battery_charging", FT_BOOL, battery_charging, OVR_BAT_CHG),
 
     // ---- 设备信息页 ----
     FLD("ip",               FT_STR,  ip,               OVR_IP),

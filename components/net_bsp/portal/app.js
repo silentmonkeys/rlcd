@@ -50,7 +50,7 @@ function tick(){api('/api/status').then(function(s){
   S.push({k:'WiFi',v:s.wifi?'已连接':'未连接'});S.push({k:'信号',v:s.rssi+' dBm'});
   S.push({k:'IP 地址',v:s.ip||'—'});S.push({k:'室内温度',v:s.temp!=null?s.temp.toFixed(1)+' ℃':'—'});
   S.push({k:'室内湿度',v:s.humi!=null?s.humi.toFixed(0)+' %':'—'});
-  S.push({k:'电池',v:s.batt!=null?s.batt+'%'+(s.charging?'（充电中）':''):'—'});
+  S.push({k:'电池',v:s.batt!=null?s.batt+'%':'—'});
   S.push({k:'室外',v:(s.otemp!=null?s.otemp.toFixed(1)+' ℃':'—')+(s.wtext?' '+s.wtext:'')});
   S.push({k:'天气更新',v:s.wupd||'尚未获取'});S.push({k:'SD 卡',v:s.sd?(s.sd_used+' / '+s.sd_total+' MB'):'未插入'});
   S.push({k:'运行时长',v:dur(s.uptime)});

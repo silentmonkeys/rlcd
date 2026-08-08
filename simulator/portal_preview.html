@@ -404,7 +404,7 @@ font-size:13px;opacity:0;transition:.2s;pointer-events:none;z-index:99}
    自动生成，改 mock 请改 tools/gen_portal.py */
 (function(){
   var STATUS={ok:true,wifi:true,rssi:-48,ip:"192.168.1.87",ssid:"MyHome_2.4G",
-    temp:24.6,humi:58,batt:92,charging:true,city:"北京市",wtext:"多云转晴",wupd:"16:42",
+    temp:24.6,humi:58,batt:92,city:"北京市",wtext:"多云转晴",wupd:"16:42",
     otemp:31.2,ohumi:44,feels:33.5,tmin:25,tmax:32,wind:"东北 12 km/h",
     sd:true,sd_used:124,sd_total:15200,uptime:39472,heap:148,
     chip:"ESP32-S3",app:"RLCD-Home 0.1",idf:"v6.0.1",mac:"84:F7:03:6C:AA:BB",flash_free:2048};
@@ -517,7 +517,7 @@ function tick(){api('/api/status').then(function(s){
   S.push({k:'WiFi',v:s.wifi?'已连接':'未连接'});S.push({k:'信号',v:s.rssi+' dBm'});
   S.push({k:'IP 地址',v:s.ip||'—'});S.push({k:'室内温度',v:s.temp!=null?s.temp.toFixed(1)+' ℃':'—'});
   S.push({k:'室内湿度',v:s.humi!=null?s.humi.toFixed(0)+' %':'—'});
-  S.push({k:'电池',v:s.batt!=null?s.batt+'%'+(s.charging?'（充电中）':''):'—'});
+  S.push({k:'电池',v:s.batt!=null?s.batt+'%':'—'});
   S.push({k:'室外',v:(s.otemp!=null?s.otemp.toFixed(1)+' ℃':'—')+(s.wtext?' '+s.wtext:'')});
   S.push({k:'天气更新',v:s.wupd||'尚未获取'});S.push({k:'SD 卡',v:s.sd?(s.sd_used+' / '+s.sd_total+' MB'):'未插入'});
   S.push({k:'运行时长',v:dur(s.uptime)});

@@ -77,7 +77,7 @@ static ui_model_t s_model = {
     .temp_min = UI_TEMP_NA, .temp_max = UI_TEMP_NA,
     .sunrise = "", .sunset = "",
     .wifi_connected = false, .wifi_rssi = 0,
-    .battery_percent = 0, .battery_charging = false,
+    .battery_percent = 0,
 };
 
 ui_model_t *ui_model_get(void) { return &s_model; }
@@ -206,7 +206,7 @@ void ui_home_create(void)
 
     // --- 状态栏（共享模块，返回的 bar 在 apply 里动态刷新）-------
     s_bar = ui_status_bar_create(scr, s_model.wifi_rssi, s_model.wifi_connected,
-                                 s_model.battery_percent, s_model.battery_charging);
+                                 s_model.battery_percent);
 
     // --- 时钟（居中）-----------------------------------------------
     int cw = lcd_clock_width();
@@ -320,7 +320,7 @@ void ui_home_apply_locked(void)
 
     // 状态栏动态刷新（WiFi 信号 + 电池电量）
     ui_status_bar_update(s_bar, s_model.wifi_rssi, s_model.wifi_connected,
-                          s_model.battery_percent, s_model.battery_charging);
+                          s_model.battery_percent);
 }
 
 // 头文件承诺"可从任何任务调用，内部会加锁" —— 这里必须真的加锁，

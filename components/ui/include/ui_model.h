@@ -57,7 +57,6 @@ typedef struct {
     bool     wifi_connected;
     int8_t   wifi_rssi;             // dBm, 0 表示未连接
     uint8_t  battery_percent;       // 0..100
-    bool     battery_charging;
 
     // ---- 设备信息页用（device / net / user_app 后端填）----
     char     ip[16];                // "192.168.1.87" (STA IP)

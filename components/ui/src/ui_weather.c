@@ -111,7 +111,7 @@ lv_obj_t *ui_weather_create(void)
     const ui_model_t *m = ui_model_get();
     s_bar = ui_page_create_scaffold(s_screen, "天气详情", 1,
                                     m->wifi_rssi, m->wifi_connected,
-                                    m->battery_percent, m->battery_charging);
+                                    m->battery_percent);
 
     // 顶部大卡片：城市在左，天气 & 温度在右
     ui_rounded_frame(s_screen, TOP_CARD_X, TOP_CARD_Y, TOP_CARD_W, TOP_CARD_H, 10, 2);
@@ -187,7 +187,7 @@ void ui_weather_apply_locked(void)
 
     // 状态栏动态刷新
     ui_status_bar_update(s_bar, m->wifi_rssi, m->wifi_connected,
-                          m->battery_percent, m->battery_charging);
+                          m->battery_percent);
 
     // 顶部大卡片
     set_or_dash(lbl_top_city, m->city);
