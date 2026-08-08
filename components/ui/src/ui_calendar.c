@@ -43,6 +43,10 @@
 #define DOT_R           3
 #define DOT_SPACING     14
 
+// 底部标签超宽时的走马灯速度（px/s）。比设备页略快 —— 这里是整屏 400px 宽，
+// 30px/s 滚一趟要十几秒，读起来太拖。
+#define CALENDAR_MARQUEE_SPEED  40
+
 // 容量上限统一在 ui_calendar.h 定义（配网门户校验时共用同一份值）
 #define MAX_MARK_DATES  UI_CAL_MAX_MARKS
 #define MAX_EVENTS      UI_CAL_MAX_EVENTS
@@ -283,10 +287,13 @@ lv_obj_t *ui_calendar_create(void)
         }
     }
 
-    // 底部标签（预定 / 随机预设文字）—— 居中，横线上方
+    // 底部标签（预定 / 随机预设文字）—— 居中，横线上方。
+    // 预定文字由后台任意下发，可能超出 400px 屏宽 → 走马灯。不超宽时
+    // LVGL 不起动画，仍是居中静态显示。
     lbl_footer = ui_make_label(s_screen, ui_font_cjk_16(), 0, 256, "");
     lv_obj_set_width(lbl_footer, 400);
     lv_obj_set_style_text_align(lbl_footer, LV_TEXT_ALIGN_CENTER, 0);
+    ui_label_marquee(lbl_footer, CALENDAR_MARQUEE_SPEED);
 
     ui_calendar_apply_locked();
     return s_screen;
@@ -374,5 +381,5 @@ void ui_calendar_apply_locked(void)
         int idx = (year * 10000 + month * 100 + today) % s_label_count;
         footer_text = s_labels[idx];
     }
-    lv_label_set_text(lbl_footer, footer_text ? footer_text : "");
+    ui_label_set_text_if_changed(lbl_footer, footer_text ? footer_text : "");
 }

@@ -20,6 +20,16 @@ lv_obj_t *ui_rounded_frame(lv_obj_t *parent, int x, int y, int w, int h,
 lv_obj_t *ui_make_label(lv_obj_t *parent, const lv_font_t *font,
                         int x, int y, const char *text);
 
+// 把一个固定宽度的 label 设成「超长就横向循环滚动」。
+// 文本没超宽时 LVGL 自己不会起动画，等同静态显示。
+// speed_px_s = 每秒滚动像素数（0 用默认 40px/s）。
+void ui_label_marquee(lv_obj_t *label, uint32_t speed_px_s);
+
+// 只在文本真的变了才写。走马灯 label 必须用这个：lv_label_set_text 会重启
+// 滚动动画并把进度归零，而各页 apply 是周期性调用的（1s/500ms 一次），
+// 无条件重写会让动画永远停在起点。
+void ui_label_set_text_if_changed(lv_obj_t *label, const char *text);
+
 // 通用白底/黑字/无阴影/无 padding
 void ui_apply_mono_bg(lv_obj_t *scr);
 

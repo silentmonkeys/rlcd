@@ -61,8 +61,41 @@ lv_obj_t *ui_make_label(lv_obj_t *parent, const lv_font_t *font,
     return lbl;
 }
 
-void ui_apply_mono_bg(lv_obj_t *scr)
+// 超长文本横向循环滚动（走马灯）。
+// 注意高度必须 >= 字体行高：LV_LABEL_LONG_SCROLL_CIRCULAR 会同时判断纵向是否
+// 溢出，label 高度写死 16 而 cjk 字库行高是 18 的话，短文本也会被判成"竖着超出"
+// 从而上下滚。这里统一按字体行高兜一次。
+void ui_label_marquee(lv_obj_t *label, uint32_t speed_px_s)
 {
+    if (!label) return;
+    const lv_font_t *font = lv_obj_get_style_text_font(label, LV_PART_MAIN);
+    int32_t lh = font ? lv_font_get_line_height(font) : 0;
+    int32_t h  = lv_obj_get_style_height(label, LV_PART_MAIN);
+    // h 可能是 LV_SIZE_CONTENT / 百分比（SPEC 编码的大数）—— 那种情况自适应，
+    // 只有显式给了偏小的像素高度才需要抬到行高。
+    if (!LV_COORD_IS_SPEC(h) && h < lh) {
+        lv_obj_set_height(label, lh);
+    }
+    // anim_duration 这里存的是"速度"编码（lv_anim_speed_*），label 内部会按
+    // 实际滚动距离换算成时长，长文本不会因为距离长而变快。
+    if (speed_px_s == 0) speed_px_s = 40;
+    lv_obj_set_style_anim_duration(label,
+                                   lv_anim_speed_clamped(speed_px_s, 300, 10000), 0);
+    lv_label_set_long_mode(label, LV_LABEL_LONG_SCROLL_CIRCULAR);
+}
+
+// 只在文本真的变了才 set —— lv_label_set_text 会重启滚动动画（新动画的
+// act_time 从 0 开始），周期性无条件重写会把走马灯永远钉在起点。
+void ui_label_set_text_if_changed(lv_obj_t *label, const char *text)
+{
+    if (!label) return;
+    if (!text) text = "";
+    const char *cur = lv_label_get_text(label);
+    if (cur && strcmp(cur, text) == 0) return;
+    lv_label_set_text(label, text);
+}
+
+void ui_apply_mono_bg(lv_obj_t *scr){
     lv_obj_set_style_bg_color(scr, lv_color_white(), 0);
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
     lv_obj_set_style_text_color(scr, lv_color_black(), 0);

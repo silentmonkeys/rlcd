@@ -129,6 +129,26 @@ GUI 客户端见 [tools/rlcd_debug_gui/README.md](tools/rlcd_debug_gui/README.md
   的 `buf[512]` 按接口数放大）。
 - 接口：`GET /api/apistat?p=day|week|month|year`。无 SD / 未 SNTP 校时 → `valid:false`。
 
+## 超长文本走马灯（ui_label_marquee）
+
+系统信息页的值 label 一律用 `ui_label_marquee()`（`ui_common.c`）而不是
+`LV_LABEL_LONG_DOT`：文本超出格子宽度就横向循环滚动，不超宽的行 LVGL 自己
+不起动画，视觉与静态一致。已知会超宽的是 IP / 名称 / 版本。
+
+- **必须配 `ui_label_set_text_if_changed()`**。`lv_label_set_text()` 会重启
+  滚动动画（新动画 `act_time` 从 0 起算），而各页 `*_apply_locked()` 是
+  1s/500ms 周期调用的 —— 无条件重写会把偏移永远钉在起点，表现为"设了滚动模式
+  但根本不滚"。这是唯一的坑，加走马灯 label 时先想到它。
+- **高度不能写死**。`LV_LABEL_LONG_SCROLL_CIRCULAR` 同时判纵向溢出，cjk 字库
+  行高是 18px，沿用旧的 `lv_obj_set_height(v, 16)` 会让短文本被判成"竖着超出"
+  而上下滚。`ui_label_marquee()` 内部按 `lv_font_get_line_height()` 兜了一次。
+- 速度用 `lv_anim_speed_clamped()` 编码存进 `anim_duration` 样式，所以是恒定
+  px/s，长文本不会因为距离长而变快。设备页取 30px/s（`DEVICE_MARQUEE_SPEED`）
+  —— 单色屏是全屏刷新，再快就糊了。
+- 验证办法：模拟器 `--page 3` 配 TCP 灌长文本，隔 ~700ms 抓两帧比对值区像素
+  （`set ssid ...` / `set app_ver ...`，注意字段名是 `wifi_connected`）。
+  只比整帧 md5 会被右上角 uptime 秒数干扰，必须按值区坐标切窗口比。
+
 ## 状态栏显示规则
 
 - **WiFi**：connected=false → 满信号 + "\" 划掉；rssi ≥ -55 → 3 弧；-65 → 2 弧；-75 → 1 弧；<-75 → 仅圆点。

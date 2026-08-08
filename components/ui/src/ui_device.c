@@ -54,6 +54,10 @@
 #define DOT_R           3
 #define DOT_SPACING     14
 
+// 值文本超宽时的走马灯速度（px/s）。单色屏是全屏刷新，太快只会糊成一片，
+// 30px/s 大约 4s 滚完一个 118px 宽的格子，肉眼刚好读得清。
+#define DEVICE_MARQUEE_SPEED   30
+
 // ------------ 页面私有状态 ---------------------------------------------
 static lv_obj_t *s_screen = NULL;
 static char s_buf[80];
@@ -105,10 +109,10 @@ static lv_obj_t *card_add_row(lv_obj_t *parent, int card_x, int card_y,
     lv_obj_t *v = ui_make_label(parent, ui_font_cjk_16(),
                                  card_x + CARD_PAD_X + LABEL_W, y, "--");
     lv_obj_set_width(v, VAL_W);
-    lv_obj_set_height(v, 16);   // 固定高度，防止换行
     lv_obj_set_style_text_align(v, LV_TEXT_ALIGN_LEFT, 0);
-    // 长文本模式：超出宽度时截断加省略号（避免 IP 长时溢出格子）
-    lv_label_set_long_mode(v, LV_LABEL_LONG_DOT);
+    // 长文本模式：超出宽度就横向循环滚动（IP / 名称 / 版本都可能超 118px）。
+    // 不超宽的行 LVGL 不会起动画，视觉与静态一致。
+    ui_label_marquee(v, DEVICE_MARQUEE_SPEED);
     return v;
 }
 
@@ -139,9 +143,7 @@ lv_obj_t *ui_device_create(void)
     make_card(s_screen, x1, y1);
     lbl_wifi = card_add_row(s_screen, x1, y1, 0, "WiFi");
     lbl_ip   = card_add_row(s_screen, x1, y1, 1, "IP");
-    lv_label_set_long_mode(lbl_ip, LV_LABEL_LONG_DOT);  // IP 超长时截断显示（无动画）
     lbl_ssid = card_add_row(s_screen, x1, y1, 2, "名称");
-    lv_label_set_long_mode(lbl_ssid, LV_LABEL_LONG_DOT); // SSID 超长时截断显示（无动画）
 
     // ---- 右上：系统 —— 运行 / 时间 / 状态 ----
     make_card(s_screen, x2, y1);
@@ -165,6 +167,13 @@ lv_obj_t *ui_device_create(void)
     return s_screen;
 }
 
+// 写一行的值。所有值 label 都是走马灯模式，必须走 if_changed —— 无条件
+// set_text 会重启滚动动画、把进度归零，看起来就是"永远不滚"。
+static void set_val(lv_obj_t *lbl, const char *text)
+{
+    ui_label_set_text_if_changed(lbl, text);
+}
+
 // -------- 数据 → UI ------------------------
 void ui_device_apply_locked(void)
 {
@@ -178,16 +187,16 @@ void ui_device_apply_locked(void)
     // 左上 - 网络
     // 未连接 STA 时，IP/SSID 显示本机 SoftAP 的信息（RLCD-Setup / 192.168.4.1）
     // ——这样用户按键关闭配网页之后，网络卡片不会残留上一次连接的陈旧数据。
-    lv_label_set_text(lbl_wifi, (char *)wifi_status_str(m));
+    set_val(lbl_wifi, (char *)wifi_status_str(m));
     if (m->wifi_connected && m->ip[0]) {
-        lv_label_set_text(lbl_ip, m->ip);
+        set_val(lbl_ip, m->ip);
     } else {
-        lv_label_set_text(lbl_ip, m->ap_ip[0] ? m->ap_ip : "--");
+        set_val(lbl_ip, m->ap_ip[0] ? m->ap_ip : "--");
     }
     if (m->wifi_connected && m->ssid[0]) {
-        lv_label_set_text(lbl_ssid, m->ssid);
+        set_val(lbl_ssid, m->ssid);
     } else {
-        lv_label_set_text(lbl_ssid, m->ap_ssid[0] ? m->ap_ssid : "--");
+        set_val(lbl_ssid, m->ap_ssid[0] ? m->ap_ssid : "--");
     }
 
     // 右上 - 系统
@@ -196,17 +205,16 @@ void ui_device_apply_locked(void)
         uint32_t hh = s / 3600, mm = (s / 60) % 60, ss = s % 60;
         snprintf(s_buf, sizeof(s_buf), "%02u:%02u:%02u",
                  (unsigned)hh, (unsigned)mm, (unsigned)ss);
-        lv_label_set_text(lbl_uptime, s_buf);
+        set_val(lbl_uptime, s_buf);
     }
     snprintf(s_buf, sizeof(s_buf), "%02d:%02d", m->hour, m->minute);
-    lv_label_set_text(lbl_time, s_buf);
-    lv_label_set_text(lbl_sensor,
-                      (m->indoor_temp != m->indoor_temp) ? "故障" : "正常");
+    set_val(lbl_time, s_buf);
+    set_val(lbl_sensor, (m->indoor_temp != m->indoor_temp) ? "故障" : "正常");
 
     // 左下 - 位置
-    lv_label_set_text(lbl_city, m->city[0] ? m->city : "--");
-    lv_label_set_text(lbl_weather, m->weather_text[0] ? m->weather_text : "--");
-    lv_label_set_text(lbl_reading, (char *)sensor_reading_str(m));
+    set_val(lbl_city, m->city[0] ? m->city : "--");
+    set_val(lbl_weather, m->weather_text[0] ? m->weather_text : "--");
+    set_val(lbl_reading, (char *)sensor_reading_str(m));
 
     // 右下 - 固件 / 存储
     // 卡片行左侧标签 "SD" 已经由 card_add_row 画出来了，值只需要 "3.2/32GB"
@@ -218,7 +226,7 @@ void ui_device_apply_locked(void)
     } else {
         snprintf(s_buf, sizeof(s_buf), "未连接");
     }
-    lv_label_set_text(lbl_sd, s_buf);
+    set_val(lbl_sd, s_buf);
 
     // 存储：Flash 已用/总容量。总容量走 esp_flash_get_size()（真实 flash 值）
     {
@@ -230,6 +238,6 @@ void ui_device_apply_locked(void)
         snprintf(s_buf, sizeof(s_buf), "%.1f/%uMB", used_mb, (unsigned)total_mb);
         (void)total_kb;
     }
-    lv_label_set_text(lbl_flash, s_buf);
-    lv_label_set_text(lbl_firmware, m->app_ver);
+    set_val(lbl_flash, s_buf);
+    set_val(lbl_firmware, m->app_ver);
 }
