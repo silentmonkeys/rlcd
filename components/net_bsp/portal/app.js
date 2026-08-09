@@ -73,7 +73,8 @@ function tick(){api('/api/status').then(function(s){
 }).catch(function(){})}
 
 // 公网 IP（uapis.cn /network/myip）—— 布局与天气卡片一致，同一套 .grid/.kv
-// 设备侧一天只拉一次，这里读的是缓存，随时可刷；auto=true 表示城市正由它自动定位。
+// 城市留空时设备每天自动拉一次；手填城市后不再自动拉，靠「刷新」按钮按需获取。
+// auto=true 表示城市正由它自动定位。
 function pubipRender(p){
   var P=[];
   P.push({k:'公网 IP',v:p&&p.valid?p.ip:'—'});
@@ -82,9 +83,10 @@ function pubipRender(p){
   P.push({k:'运营商',v:p&&p.valid&&p.isp?p.isp:'—'});
   $('pubip').innerHTML=kvHtml(P);
   var h=$('pubiphint');
-  if(!p||!p.valid)h.textContent='尚未获取。设备联网后每天获取一次。';
+  if(!p||!p.valid)h.textContent=p&&p.auto?'尚未获取。设备联网后每天获取一次。'
+    :'尚未获取。已手动指定城市，请点「刷新」按需获取。';
   else if(p.auto)h.textContent='当前天气城市：'+(p.city||'—')+'（自动定位）';
-  else h.textContent='已手动指定城市，自动定位未启用。';
+  else h.textContent='已手动指定城市，自动定位未启用；此处为最近一次手动获取的结果。';
 }
 function loadPubip(){return api('/api/pubip').then(pubipRender).catch(function(){})}
 
@@ -265,9 +267,12 @@ document.addEventListener('DOMContentLoaded', function(){
     .then(function(){toast('正在定位，请稍候','ok');
       setTimeout(function(){tick();loadPubip()},5000)})
     .catch(function(e){toast(e.message,'bad')}).then(function(){busy('btncity',false)})});
-  // 公网 IP 卡片的刷新：读设备缓存（一天一次的拉取结果），不额外消耗 API 配额
+  // 公网 IP 卡片的刷新：主动让设备拉一次 UAPI（消耗一次配额）。
+  // 后台自动定位只在城市留空时每天一次，手填城市后这里是唯一的获取途径。
   on('btnpubip',function(){busy('btnpubip',true);
-    loadPubip().then(function(){busy('btnpubip',false)})});
+    post('/api/pubip_refresh').then(function(){toast('正在获取，请稍候','ok');
+      setTimeout(function(){loadPubip();busy('btnpubip',false)},5000)})
+    .catch(function(e){toast(e.message,'bad');busy('btnpubip',false)})});
   on('btnmark',function(){var v=mmdd($('i_mark').value);if(!v){toast('请先选择日期','bad');return}
     if(marks.indexOf(v)>=0){toast('该日期已存在于列表中','bad');return}
     marks.push(v);marks.sort();$('i_mark').value='';dirty=true;render()});

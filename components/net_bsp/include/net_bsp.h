@@ -78,8 +78,9 @@ void NetBsp_Start(void);
 // 主动触发一次天气刷新（用于按钮或 debug）
 void NetBsp_TriggerWeatherFetch(void);
 
-// 主动触发一次「自动城市」定位（门户天气页的刷新城市按钮）。
-// 仅在配置里的城市为空时有效 —— 用户手填的城市永远优先，不会被自动结果覆盖。
+// 主动触发一次 UAPI 定位（公网 IP + 归属地，城市留空时顺带更新自动城市）。
+// 任何时候都受理 —— 手填城市的用户点门户「公网 IP · 刷新」也能拉到 IP；
+// 但**绝不写回配置里的城市**，手填的城市永远优先。
 // 实际请求由 weather_task 下一轮执行（本函数只置标志 + kick，立即返回）。
 void NetBsp_TriggerCityRefresh(void);
 

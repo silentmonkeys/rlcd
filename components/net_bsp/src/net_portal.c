@@ -14,6 +14,7 @@
 //   POST /api/weather_refresh  触发一次天气拉取
 //   POST /api/city_refresh   触发一次「自动城市」定位（仅城市留空时有效）
 //   GET  /api/pubip          最近一次 UAPI 定位结果（公网 IP / 归属地 / 运营商）
+//   POST /api/pubip_refresh  主动拉一次公网 IP（手填城市时也受理）
 //   POST /api/reboot         重启
 //   POST /api/forget         清 WiFi 凭据并重启
 //   GET  /api/data/csv       CSV 数据（默认最新若干行；?full=1 为完整文件）
@@ -923,6 +924,17 @@ static esp_err_t city_refresh_post(httpd_req_t *req)
     return send_ok(req);
 }
 
+// POST /api/pubip_refresh —— 主动拉一次 UAPI 定位（公网 IP / 归属地）。
+// 与 city_refresh 的区别：**不管城市有没有手填都受理**。后台每日自动定位只在
+// 城市留空时跑，所以手填城市的用户想看公网 IP 只有这一条路 —— 点了按钮才消耗
+// 一次配额，属于显式操作显式付费。城市留空时顺带刷新自动城市（同一次请求）。
+static esp_err_t pubip_refresh_post(httpd_req_t *req)
+{
+    NetBsp_TriggerCityRefresh();
+    ESP_LOGI(NET_TAG, "portal: 手动触发 UAPI 定位（公网 IP）");
+    return send_ok(req);
+}
+
 // GET /api/pubip —— 最近一次 UAPI 定位结果（公网 IP / 归属地 / 运营商）。
 // 尚未成功拉过时回 ok:true + valid:false，前端显示 "—"（不是错误，只是还没拿到）。
 static esp_err_t pubip_get(httpd_req_t *req)
@@ -1142,7 +1154,7 @@ void config_httpd_start(void)
 {
     if (s_httpd) return;
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
-    cfg.max_uri_handlers  = 20;   // 当前 17 条，留几个余量（超了会静默注册失败）
+    cfg.max_uri_handlers  = 20;   // 当前 18 条，留几个余量（超了会静默注册失败）
     cfg.stack_size        = 8 * 1024;   // JSON 生成 + snprintf 需要点栈
     // scan 阻塞 ~2-3s，把发送/接收 timeout 拉长避免浏览器提前断连
     cfg.recv_wait_timeout = 10;
@@ -1162,6 +1174,7 @@ void config_httpd_start(void)
         { .uri = "/api/weather_refresh", .method = HTTP_POST, .handler = weather_refresh_post },
         { .uri = "/api/city_refresh",    .method = HTTP_POST, .handler = city_refresh_post },
         { .uri = "/api/pubip",           .method = HTTP_GET,  .handler = pubip_get },
+        { .uri = "/api/pubip_refresh",   .method = HTTP_POST, .handler = pubip_refresh_post },
         { .uri = "/api/reboot",          .method = HTTP_POST, .handler = reboot_post },
         { .uri = "/api/forget",          .method = HTTP_POST, .handler = forget_post },
         { .uri = "/api/data/csv",        .method = HTTP_GET,  .handler = csv_get },

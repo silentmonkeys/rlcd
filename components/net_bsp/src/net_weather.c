@@ -167,11 +167,12 @@ static bool wx_fetch_daily(const char *host, const char *apikey,
 // 注：CSV 日志已迁移到 user_app.c —— 用独立的 10 分钟节奏，无网也能记录
 // 本地温湿度（哪怕 weather 拉不到，"室外/天气" 字段留空即可）。
 
-// 「自动城市」一天一次：城市留空时调 UAPI /network/myip?source=commercial，
-// 用 district 当查询词。结果只存运行期缓存（s_uapi_info + 返回值），
+// 「自动城市」+ 公网 IP：调 UAPI /network/myip?source=commercial，用 district
+// 当查询词。结果只存运行期缓存（s_uapi_info + 返回值），
 // **不写回 s_cfg.city** —— 手填城市永远优先，自动值不该变成"手填过"的样子。
 //
-// 与 Daily 共用同一个"跨天"判据：day 变了就该重新定位（设备可能已经挪地方了）。
+// 触发时机两条：城市留空时每天一次（与 Daily 共用"跨天"判据 —— day 变了就该
+// 重新定位，设备可能已经挪地方了）；门户按钮强制一次（任何时候，见 net_portal.c）。
 // 返回是否成功拿到自动城市；auto_city 为出参（失败时保持原值不动）。
 //
 // 失败时**不**记 last_ip_day，让下一轮（10min/30s）重试；但用 tries 计数封顶，
@@ -230,17 +231,23 @@ void weather_task(void *arg)
     for (;;) {
         bool ok = false;
 
-        // ---- UAPI 每日定位：一天一次，天气凭据缺失时照样跑 ----
+        // ---- UAPI 定位（公网 IP + 自动城市）----
         // 两个用途：① 城市留空时提供自动城市；② 公网 IP / 归属地供门户「网络」页展示。
         // 放在天气凭据判断**之外** —— 没配 QWeather 也该能看到自己的公网 IP。
-        // 门户「刷新城市」按钮通过 s_uapi_city_kick 无视每日节拍强制重跑。
+        // 频率分两条路：每日自动（仅城市留空）+ 门户按钮强制（任何时候）。
+        bool force_ip = false;
         if (s_uapi_city_kick) {
             s_uapi_city_kick = false;
-            last_ip_day = -1;
-            ip_tries    = 0;        // 手动刷新重置失败计数
-            ESP_LOGI(NET_TAG, "weather: 手动触发自动城市刷新");
+            ip_tries = 0;               // 手动刷新重置失败计数
+            force_ip = true;
+            ESP_LOGI(NET_TAG, "weather: 手动触发 UAPI 定位");
         }
-        if (last_ip_day == -1 || m->day != last_ip_day) {
+        // 每日自动定位**只在城市留空时**跑：手填城市后自动结果既不参与查询词，
+        // 跨天再拉纯属白耗配额 —— 想看公网 IP 就点门户「公网 IP · 刷新」，
+        // 显式操作才显式消耗配额。
+        bool daily_ip_due = !s_cfg.city[0] &&
+                            (last_ip_day == -1 || m->day != last_ip_day);
+        if (force_ip || daily_ip_due) {
             if (m->day != last_ip_day) ip_tries = 0;   // 跨天重新给满次数
             char prev[sizeof(auto_city)];
             strcpy(prev, auto_city);
@@ -251,6 +258,12 @@ void weather_task(void *arg)
                 city.id[0] = 0;
                 last_daily_day = -1;
             }
+        }
+        // 手填城市期间不记"今天已定位" —— 否则用户之后清空城市要等到明天才补上
+        // 定位。清空城市保存时门户会 kick 本任务，下一轮立刻走 daily_ip_due。
+        if (s_cfg.city[0]) {
+            last_ip_day = -1;
+            ip_tries    = 0;
         }
 
         if (!s_cfg.weather_host[0] || !s_cfg.weather_apikey[0]) {

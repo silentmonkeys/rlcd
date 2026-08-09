@@ -49,8 +49,8 @@ extern bool               s_offline_setup_shown;   // 已因超时弹过一次 S
 // 城市 → LocationID 的解析结果缓存在 weather_task 的局部变量里，光改 NVS 不会生效；
 // 有了这个标志，改城市就不必重启设备。
 extern volatile bool      s_weather_city_dirty;
-// 门户「天气」页的刷新城市按钮 → 置位，weather_task 下一轮强制重跑 UAPI 定位。
-// 只在"用户没手填城市"时有意义（手填城市优先，自动定位不参与）。
+// 门户的「重新定位」/「公网 IP · 刷新」按钮 → 置位，weather_task 下一轮强制
+// 重跑 UAPI 定位（无视每日节拍，也无视城市是否手填）。
 extern volatile bool      s_uapi_city_kick;
 // UAPI 最近一次定位结果（供门户「网络」页展示公网 IP / 归属地）。
 // 由 weather_task 写、httpd 任务读；都是整块小结构的字段级读写，

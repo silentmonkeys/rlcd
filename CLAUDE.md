@@ -82,7 +82,7 @@ GUI 客户端见 [tools/rlcd_debug_gui/README.md](tools/rlcd_debug_gui/README.md
 | ------------------------ | --------------------- | ---------------------------------------------------------------------------------------- |
 | user_tick                | 1s；**5s 慢节拍**     | 每秒读时间 + SHTC3；5s 慢节拍做 SD 热插拔探活 + 电池采样 +`NetBsp_OfflineWatchdogTick()` + `NetBsp_OtaSelfTestTick()` |
 | csv_log                  | 10min                 | 追加一行 CSV 到 SD（首帧延迟 15s，fsync 落盘）                                           |
-| weather                  | 成功 10min / 失败 30s | 拉 QWeather；**顺带每日一次 UAPI 定位**（自动城市 + 公网 IP）；事件位可提前唤醒 |
+| weather                  | 成功 10min / 失败 30s | 拉 QWeather；**城市留空时顺带每日一次 UAPI 定位**（自动城市 + 公网 IP）；事件位可提前唤醒 |
 | LVGL                     | 自适应 1~500ms        | `lv_timer_handler()` 渲染                                                                |
 | button tick（esp_timer） | 5ms                   | multi_button 按键去抖                                                                    |
 | lvgl tick（esp_timer）   | 5ms                   | 给 LVGL 喂 tick                                                                          |
@@ -97,17 +97,24 @@ GUI 客户端见 [tools/rlcd_debug_gui/README.md](tools/rlcd_debug_gui/README.md
 用返回的 `district`（行政区，如"青秀区"）当查询词喂 QWeather 城市解析；`district` 缺失时退到
 `region`（"国家 省份 城市"）末段。
 
-- **优先级**：用户手填城市**永远优先**。`s_cfg.city` 非空时完全不调 UAPI，也不消耗配额。
+- **优先级**：用户手填城市**永远优先**。`s_cfg.city` 非空时后台**一次都不调** UAPI（跨天
+  也不调），不消耗配额 —— 自动结果此时既不参与查询词也没人消费。
   自动结果只存运行期缓存（`s_uapi_info` / weather_task 局部 `auto_city`），**绝不写回
   `s_cfg.city`** —— 否则自动值会伪装成"用户手填过"。
-- **频率**：一天一次，与 daily 天气共用「跨天」判据，挂在 weather_task 里（无独立任务）。
-  失败不记当天、下轮重试，但每天最多试 5 次（`UAPI_MAX_TRIES_PER_DAY`），避免限流时空转。
+- **频率**：两条路，都挂在 weather_task 里（无独立任务）。
+  ① **每日自动**：**仅城市留空时**，与 daily 天气共用「跨天」判据。失败不记当天、下轮
+  重试，但每天最多试 5 次（`UAPI_MAX_TRIES_PER_DAY`），避免限流时空转。
+  ② **门户按钮强制**（`s_uapi_city_kick`）：无视每日节拍，**也无视城市是否手填** ——
+  手填城市的用户想看公网 IP 只有这一条路，点了才消耗配额。
   定位**不受**天气凭据缺失影响 —— 没配 QWeather 也能看到自己的公网 IP。
+  > 手填城市期间 `last_ip_day` 一直复位成 -1，用户之后清空城市（保存时门户会 kick
+  > 天气任务）下一轮立刻补一次定位，不用等到明天。
 - **鉴权**：`Authorization: Bearer <uapi-…>`，key 存 NVS（`uapi_key`，门户天气页可填），
   **不硬编码、不进 URL**。留空则按访客配额调用（文档：1500 credits/月/IP、4 QPS）。
-- **门户**：天气页「刷新城市」按钮（城市非空时后端回 409）；网络页「公网 IP」卡片
-  用同一套 `.grid/.kv` 布局展示 ip/region/district/isp。接口 `POST /api/city_refresh`、
-  `GET /api/pubip`。
+- **门户**：天气页「重新定位」按钮（`POST /api/city_refresh`，城市非空时后端回 409）；
+  网络页「公网 IP」卡片用同一套 `.grid/.kv` 布局展示 ip/region/district/isp，其「刷新」
+  按钮走 `POST /api/pubip_refresh`（**任何时候都受理**，会真的发一次请求）+ `GET /api/pubip`
+  读缓存。
 
 ## 外部接口调用统计（net_apistat.c）
 

@@ -225,9 +225,9 @@ void NetBsp_TriggerWeatherFetch(void)
     }
 }
 
-// 手动刷新「自动城市」：置标志让 weather_task 下一轮无视每日节拍重跑 UAPI 定位，
-// 再 kick 一次天气让它立刻醒过来。用户手填了城市时自动定位本就不参与，
-// 这里也就只影响"城市留空"的情形（门户按钮同样只在留空时可点）。
+// 手动刷新 UAPI 定位：置标志让 weather_task 下一轮无视每日节拍重跑，再 kick
+// 一次天气让它立刻醒过来。任何时候都受理 —— 手填城市时后台不再每日自动定位，
+// 公网 IP 就只能靠这条显式路径拿到。自动结果仍不会覆盖手填的城市。
 void NetBsp_TriggerCityRefresh(void)
 {
     s_uapi_city_kick = true;
