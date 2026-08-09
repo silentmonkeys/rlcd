@@ -20,12 +20,20 @@ idf.py -p /dev/ttyUSB0 flash monitor
 ### 桌面模拟器（SDL2 + LVGL v9）
 
 ```sh
-sudo apt install libsdl2-dev cmake build-essential
+sudo apt install libsdl2-dev cmake build-essential python3-tk
+
+# 一条命令：编译 + 起模拟器 + 起调试台（自动连接，两窗口并排不重叠），关窗口时收掉模拟器
+bash tools/dev_sim.sh            # --page N 指定起始页 / --no-build 跳过编译
+                                 # --sim-only 只要模拟器 / --gui-only 连已在跑的实例
+                                 # --stack 上下叠放 / --no-layout 不管窗口位置
+
+# 或手动分两个终端
 cd simulator && cmake -B build && cmake --build build -j
 ./build/rlcd_sim
 # 抓帧：./build/rlcd_sim --capture /tmp/frame.ppm --capture-ms 1500
+# 窗口位置：./build/rlcd_sim --pos 40,40（默认居中）
 # 控制台：mark MM-DD 标注日历 / unmark 清除 / page N 切页
-# 图形化调试：python3 tools/rlcd_debug_gui/rlcd_debug_gui.py
+# 图形化调试：python3 tools/rlcd_debug_gui/rlcd_debug_gui.py [host:port] [--connect] [--geometry WxH+X+Y]
 ```
 
 键（窗口模式）：`ESC` `S` 存帧 / `+ -` 缩放。

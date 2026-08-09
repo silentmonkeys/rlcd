@@ -27,7 +27,9 @@ rlcd_debug_gui —— RLCD 模拟器图形化调试客户端
   clear / ping / help / quit
 
 依赖：Python 3.8+（仅标准库 —— tkinter + socket + threading）
-用法：python3 rlcd_debug_gui.py [host[:port]]
+用法：python3 rlcd_debug_gui.py [host[:port]] [--connect] [--geometry WxH+X+Y]
+      --connect：启动即自动连接，不用手点「连接」（tools/dev_sim.sh 走这条）
+      --geometry：Tk 几何字符串，指定窗口大小/位置，避免和模拟器窗口叠在一起
 """
 
 import math
@@ -469,10 +471,11 @@ class FieldRow:
 # 主应用
 # ---------------------------------------------------------------------------
 class App(tk.Tk):
-    def __init__(self, host=DEFAULT_HOST, port=DEFAULT_PORT):
+    def __init__(self, host=DEFAULT_HOST, port=DEFAULT_PORT, autoconnect=False,
+                 geometry=None):
         super().__init__()
         self.title("RLCD 调试台")
-        self.geometry("1080x760")
+        self.geometry(geometry or "1080x760")
         self.minsize(900, 600)
 
         self.host = tk.StringVar(value=host)
@@ -489,6 +492,9 @@ class App(tk.Tk):
         self._build_ui()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self.after(RESP_POLL_MS, self._drain)
+        # 自动连接：等窗口画完再连，连接失败也只是日志一行，不阻塞界面
+        if autoconnect:
+            self.after(100, self._toggle_connect)
 
     def _setup_styles(self):
         s = ttk.Style()
@@ -908,9 +914,21 @@ class App(tk.Tk):
 
 def main():
     host, port = DEFAULT_HOST, DEFAULT_PORT
-    if len(sys.argv) > 1:
-        arg = sys.argv[1]
-        if ":" in arg:
+    autoconnect = False
+    geometry = None
+    args = sys.argv[1:]
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg == "--connect":
+            autoconnect = True
+        elif arg == "--geometry":
+            i += 1
+            if i >= len(args):
+                print("--geometry 缺少参数（形如 1080x760+1400+40）", file=sys.stderr)
+                return 1
+            geometry = args[i]
+        elif ":" in arg:
             h, _, p = arg.partition(":")
             host = h or DEFAULT_HOST
             try:
@@ -920,7 +938,8 @@ def main():
                 return 1
         else:
             host = arg
-    App(host, port).mainloop()
+        i += 1
+    App(host, port, autoconnect, geometry).mainloop()
     return 0
 
 

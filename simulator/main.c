@@ -297,10 +297,12 @@ int main(int argc, char **argv)
     // --gallery                 —— 循环切换 8 种天气图标（1.5s/张）
     // --gallery-capture <dir>   —— 8 张连拍到目录，退出
     // --page <id>               —— 启动时切到指定页（0=home, 1=device）
+    // --pos <x>,<y>             —— 窗口左上角坐标（给 dev_sim.sh 排版用，默认居中）
     const char *capture_path = NULL;
     const char *gallery_dir = NULL;
     int capture_ms = 1500;
     int start_page = -1;
+    int win_x = SDL_WINDOWPOS_CENTERED, win_y = SDL_WINDOWPOS_CENTERED;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--capture") && i + 1 < argc) {
             capture_path = argv[++i];
@@ -308,6 +310,10 @@ int main(int argc, char **argv)
             capture_ms = atoi(argv[++i]);
         } else if (!strcmp(argv[i], "--page") && i + 1 < argc) {
             start_page = atoi(argv[++i]);
+        } else if (!strcmp(argv[i], "--pos") && i + 1 < argc) {
+            int x, y;
+            if (sscanf(argv[++i], "%d,%d", &x, &y) == 2) { win_x = x; win_y = y; }
+            else fprintf(stderr, "--pos 格式应为 x,y（忽略）\n");
         } else if (!strcmp(argv[i], "--gallery")) {
             s_gallery_mode = true;
         } else if (!strcmp(argv[i], "--gallery-capture") && i + 1 < argc) {
@@ -331,7 +337,7 @@ int main(int argc, char **argv)
         return 1;
     }
     window = SDL_CreateWindow("RLCD 4.2\" simulator (400x300)",
-                              SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
+                              win_x, win_y,
                               LCD_W * SCALE, LCD_H * SCALE, 0);
     renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
     SDL_RenderSetLogicalSize(renderer, LCD_W, LCD_H);

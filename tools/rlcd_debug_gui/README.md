@@ -13,6 +13,10 @@
 ## 用法
 
 ```sh
+# 最快：一条命令编译 + 起模拟器 + 起本 GUI（自动连接、两窗口并排不重叠），关窗口时收掉模拟器
+bash tools/dev_sim.sh
+
+# 或手动分两个终端
 # 终端 1：启动模拟器（带 TCP debug server）
 cd simulator && cmake -B build && cmake --build build -j
 ./build/rlcd_sim
@@ -21,9 +25,13 @@ cd simulator && cmake -B build && cmake --build build -j
 python3 tools/rlcd_debug_gui/rlcd_debug_gui.py
 # 连远程/换端口：
 python3 tools/rlcd_debug_gui/rlcd_debug_gui.py 192.168.1.5:9000
+# 启动即自动连接（dev_sim.sh 用的就是这个）：
+python3 tools/rlcd_debug_gui/rlcd_debug_gui.py --connect
+# 指定窗口大小/位置（Tk 几何字符串，dev_sim.sh 用它避免和模拟器窗口重叠）：
+python3 tools/rlcd_debug_gui/rlcd_debug_gui.py --geometry 1080x760+858+40
 ```
 
-启动后点 **连接** → 即可调试。
+启动后点 **连接** → 即可调试（带 `--connect` 时已自动连上）。
 
 ## 界面说明
 
