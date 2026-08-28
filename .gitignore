@@ -48,3 +48,4 @@ frame*.ppm
 .claude/
 #和风天气官网提供的图标资源
 NEEDS/weather_icons/QWeather-Icons-1.8.0
+architecture

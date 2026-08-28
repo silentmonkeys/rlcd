@@ -313,17 +313,26 @@ void ui_calendar_apply_locked(void)
     int month = m->month;
     int today = m->day;
 
-    // 空数据保护：模拟器/设备启动初期 year 可能是 0
-    if (year < 1970 || year > 2200 || month < 1 || month > 12) return;
+    // 空数据保护：模拟器/设备启动初期 year 可能是 0；设备在 SNTP 校时前
+    // 系统时间是 1970-01-01，也不能当合法日期渲染 —— 否则会先画出一版
+    // "1970年1月"（1号=今日黑圆、2/3号=元旦空心框），校时后这些高亮还会
+    // 以样式残留的形式留在空格子上（见下方清空循环里的注释）。
+    if (year < 2000 || year > 2200 || month < 1 || month > 12) return;
 
     // 更新标题
     snprintf(s_title, sizeof(s_title), "%d年%d月", year, month);
     lv_label_set_text(lbl_title, s_title);
 
-    // 清空所有日期 label
+    // 清空所有日期 label。样式必须在这里一并复位：下面的 fill 循环只会
+    // 碰到"本轮有日期"的格子，跨月切换后原来落在首行/尾行空位上的
+    // 今日黑圆/节假日方框不再有文字可填，若不在此处复位就会永久残留。
     for (int r = 0; r < 6; r++) {
         for (int c = 0; c < 7; c++) {
             lv_label_set_text(lbl_day[r][c], "");
+            lv_obj_set_style_bg_opa(lbl_day[r][c], LV_OPA_TRANSP, 0);
+            lv_obj_set_style_border_width(lbl_day[r][c], 0, 0);
+            lv_obj_set_style_text_color(lbl_day[r][c], lv_color_black(), 0);
+            lv_obj_set_style_radius(lbl_day[r][c], 0, 0);
         }
     }
 
@@ -339,14 +348,7 @@ void ui_calendar_apply_locked(void)
             snprintf(buf, sizeof(buf), "%d", day);
             lv_label_set_text(lbl_day[r][c], buf);
 
-            // 清除之前的样式（重要：文字颜色也要复位到黑色，否则曾被
-            // 高亮成"今日/标注"的格子在 today 变化后会残留白色字，白底白字看不见）
-            lv_obj_set_style_bg_opa(lbl_day[r][c], LV_OPA_TRANSP, 0);
-            lv_obj_set_style_border_width(lbl_day[r][c], 0, 0);
-            lv_obj_set_style_text_color(lbl_day[r][c], lv_color_black(), 0);
-            lv_obj_set_style_radius(lbl_day[r][c], 0, 0);
-
-            // 检查是否需要高亮
+            // 样式已在上面清空循环里统一复位，这里按需叠加高亮
             int is_today = (day == today);
             int holiday = is_holiday(month, day);
             int marked = is_marked(month, day);
