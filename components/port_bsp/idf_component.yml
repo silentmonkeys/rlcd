@@ -1,0 +1,7 @@
+## port_bsp 组件依赖
+## esp_codec_dev：ES8311（DAC 出声）/ ES7210（双麦收音）codec 驱动 + I2S 数据通路，
+## 供 audio_bsp.c 实现 xiaozhi 语音对话的音频底座（反向注册给 net_bsp）。
+dependencies:
+  idf:
+    version: '>=6.0'
+  espressif/esp_codec_dev: "^1.3.4"

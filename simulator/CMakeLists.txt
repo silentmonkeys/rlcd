@@ -41,6 +41,11 @@ add_executable(rlcd_sim
     ${UI_DIR}/src/ui_calendar.c
     ${UI_DIR}/src/ui_device.c
     ${UI_DIR}/src/ui_bot.c
+    ${UI_DIR}/src/bloub/bloub_math.c
+    ${UI_DIR}/src/bloub/bloub_face.c
+    ${UI_DIR}/src/bloub/bloub_states.c
+    ${UI_DIR}/src/bloub/bloub_engine.c
+    ${UI_DIR}/src/bloub/bloub_render.c
     ${UI_DIR}/src/ui_setup.c
     ${UI_DIR}/src/ui_pages.c
     ${UI_DIR}/src/lcd_clock.c

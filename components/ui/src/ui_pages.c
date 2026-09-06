@@ -11,9 +11,13 @@
 
 #ifdef ESP_PLATFORM
 #include "lvgl_bsp.h"
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#define UI_YIELD() vTaskDelay(1)   // 建页间隙喂 IDLE，防启动期 task WDT 误报
 #else
 static inline bool Lvgl_lock(int timeout_ms) { (void)timeout_ms; return true; }
 static inline void Lvgl_unlock(void) {}
+static inline void UI_YIELD(void) {}
 #endif
 
 static ui_page_id_t s_current = UI_PAGE_HOME;
@@ -32,10 +36,15 @@ static bool page_visible(ui_page_id_t p)
 void ui_pages_create(void)
 {
     ui_setup_create();
-    ui_bot_create();
+    UI_YIELD();
     ui_device_create();
+    UI_YIELD();
     ui_calendar_create();
+    UI_YIELD();
     ui_weather_create();
+    UI_YIELD();
+    ui_bot_create();
+    UI_YIELD();
     ui_home_create();   // home 最后建，会 lv_screen_load 到自己
     s_current = UI_PAGE_HOME;
 }
@@ -123,10 +132,10 @@ ui_page_id_t ui_pages_current(void) { return s_current; }
 void ui_pages_apply_locked(void)
 {
     ui_home_apply_locked();
+    ui_bot_apply_locked();
     ui_weather_apply_locked();
     ui_calendar_apply_locked();
     ui_device_apply_locked();
-    ui_bot_apply_locked();
     ui_setup_apply_locked();
 
     // 如果当前是 SETUP 页但不再可见（配网结束 / 用户 dismiss），自动切回 HOME

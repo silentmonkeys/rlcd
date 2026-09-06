@@ -17,6 +17,8 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <esp_system.h>
+#include <esp_heap_caps.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <freertos/event_groups.h>
@@ -319,10 +321,15 @@ void weather_task(void *arg)
             }
         }
 
-        // 报告栈使用（保留一次，便于确认改到 zlib 后余量足够）
+        // 报告栈使用（保留一次，便于确认改到 zlib 后余量足够）；
+        // 顺带报堆水位 —— 内部 RAM 紧张时 mbedtls_ssl_setup 会 -0x008D
         UBaseType_t hwm = uxTaskGetStackHighWaterMark(NULL);
-        ESP_LOGI(NET_TAG, "weather cycle ok=%d stack_free=%u B", (int)ok,
-                 (unsigned)hwm * sizeof(StackType_t));
+        ESP_LOGI(NET_TAG,
+                 "weather cycle ok=%d stack_free=%u B | heap all=%u min=%u internal=%u",
+                 (int)ok, (unsigned)hwm * sizeof(StackType_t),
+                 (unsigned)esp_get_free_heap_size(),
+                 (unsigned)esp_get_minimum_free_heap_size(),
+                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
 
         // 下一轮：成功→10 min，失败→30 s；期间被 kick 会提前唤醒
         TickType_t wait = ok ? pdMS_TO_TICKS(10 * 60 * 1000) : pdMS_TO_TICKS(30 * 1000);

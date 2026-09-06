@@ -26,6 +26,24 @@
 #define NET_HTTP_MAX_BYTES    16384       // 单次响应上限（未压缩）
 #define NET_GZIP_MAX_BYTES    32768       // 解压输出上限
 
+// ------------ HTTPS 串行闸 ----------------------------------------------
+// 内部堆只有 ~26KB，一条 TLS 握手峰值就要 ~16KB（dynamic buffer + 上下文）。
+// 天气(30s 轮询)和 xiaozhi(10s 轮询)的握手一撞车就是 mbedtls -0x008D。
+// 所有 HTTPS（本文件 GET + net_xiaozhi POST + 未来的 OTA）都过这把锁，
+// 把峰值从 N 条连接压回 1 条。请求本身不频繁，串行无感知。
+static SemaphoreHandle_t s_https_mux = NULL;
+
+void NetBsp_HttpLock(void)
+{
+    if (!s_https_mux) s_https_mux = xSemaphoreCreateMutex();
+    xSemaphoreTake(s_https_mux, portMAX_DELAY);
+}
+
+void NetBsp_HttpUnlock(void)
+{
+    if (s_https_mux) xSemaphoreGive(s_https_mux);
+}
+
 // URL 百分比编码（保留 unreserved: A-Z a-z 0-9 - . _ ~）
 void net_url_encode(char *out, size_t out_n, const char *in)
 {
@@ -156,7 +174,8 @@ char *net_gunzip(const char *gz, size_t gz_len, size_t *out_len)
 //
 // io->hdr_name/hdr_val 可选（UAPI 用来带 Authorization: Bearer）；
 // io->retry_after_s 在服务端给了 Retry-After 时填秒数（限流退避用）。
-char *net_http_get_text(const char *url, net_http_req_t *io, size_t *out_len)
+// 实现：caller 必须已持 NetBsp_HttpLock()
+static char *get_text_locked(const char *url, net_http_req_t *io, size_t *out_len)
 {
     if (out_len) *out_len = 0;
     io->status = 0;
@@ -254,4 +273,12 @@ char *net_http_get_text(const char *url, net_http_req_t *io, size_t *out_len)
     if (!plain) return NULL;
     if (out_len) *out_len = plain_len;
     return plain;
+}
+
+char *net_http_get_text(const char *url, net_http_req_t *io, size_t *out_len)
+{
+    NetBsp_HttpLock();
+    char *r = get_text_locked(url, io, out_len);
+    NetBsp_HttpUnlock();
+    return r;
 }

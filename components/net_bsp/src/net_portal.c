@@ -428,7 +428,7 @@ static esp_err_t not_found(httpd_req_t *req, httpd_err_code_t err)
 static esp_err_t status_get(httpd_req_t *req)
 {
     const ui_model_t *m = ui_model_get();
-    char buf[1280];
+    char buf[1536];
     jw_t w = { buf, sizeof(buf), 0, false };
 
     jw_putc(&w, '{');
@@ -475,6 +475,10 @@ static esp_err_t status_get(httpd_req_t *req)
     jw_kv_str (&w, "app",  m->app_ver);
     jw_kv_str (&w, "idf",  m->idf_ver);
     jw_kv_str (&w, "mac",  m->mac);
+    // xiaozhi AI（bot 页）：通道状态 + 激活码 + 最新回答
+    jw_kv_int (&w, "xz",       m->bot_xz_status);
+    jw_kv_str (&w, "xzcode",   m->bot_xz_code);
+    jw_kv_str (&w, "xzreply", m->bot_chat_reply);
     jw_putc(&w, '}');
 
     if (w.ovf) return send_err(req, "500 Internal Server Error", "状态数据过长");
@@ -935,6 +939,27 @@ static esp_err_t pubip_refresh_post(httpd_req_t *req)
     return send_ok(req);
 }
 
+// POST /api/xz_chat —— 发一句文本问题给 xiaozhi AI。
+// 一轮会话由 xiaozhi_task 串行执行（开 WS → hello → detect → 收回答 → 断开），
+// 进行中再发返回 409；回答出现在 /api/status 的 xzreply（5s 自动刷新可见）。
+static esp_err_t xz_chat_post(httpd_req_t *req)
+{
+    esp_err_t err;
+    char *body = read_body(req, &err);
+    if (!body) return err;
+    char text[128];
+    bool present;
+    bool ok = opt_str(body, "text", text, sizeof(text), &present);
+    free(body);
+    if (!ok || !present || !text[0])
+        return send_err(req, "400 Bad Request", "缺少 text");
+    if (NetBsp_XiaozhiStatus() != UI_BOT_XZ_READY)
+        return send_err(req, "409 Conflict", "xiaozhi 未就绪（未配置或激活中）");
+    if (!NetBsp_XiaozhiChat(text))
+        return send_err(req, "409 Conflict", "上一轮对话还在进行，请稍候");
+    return send_ok(req);
+}
+
 // GET /api/pubip —— 最近一次 UAPI 定位结果（公网 IP / 归属地 / 运营商）。
 // 尚未成功拉过时回 ok:true + valid:false，前端显示 "—"（不是错误，只是还没拿到）。
 static esp_err_t pubip_get(httpd_req_t *req)
@@ -1175,6 +1200,7 @@ void config_httpd_start(void)
         { .uri = "/api/city_refresh",    .method = HTTP_POST, .handler = city_refresh_post },
         { .uri = "/api/pubip",           .method = HTTP_GET,  .handler = pubip_get },
         { .uri = "/api/pubip_refresh",   .method = HTTP_POST, .handler = pubip_refresh_post },
+        { .uri = "/api/xz_chat",         .method = HTTP_POST, .handler = xz_chat_post },
         { .uri = "/api/reboot",          .method = HTTP_POST, .handler = reboot_post },
         { .uri = "/api/forget",          .method = HTTP_POST, .handler = forget_post },
         { .uri = "/api/data/csv",        .method = HTTP_GET,  .handler = csv_get },

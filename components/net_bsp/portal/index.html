@@ -20,7 +20,13 @@
 <div class=card><div class=cardhd><b>设备状态</b>
 <button class='btn sm' id=btnstat>刷新</button></div>
 <div class=grid id=stat></div>
-<p class=hint>数据每 5 秒自动刷新。</p></div></section>
+<p class=hint>数据每 5 秒自动刷新。</p></div>
+<div class=card><div class=cardhd><b>AI 助手（xiaozhi）</b><span class=cnt id=xzst></span></div>
+<div class=inwrap><input id=f_xz maxlength=127 autocomplete=off placeholder='给 AI 提一个问题…' type=text></div>
+<button class='btn primary' id=btnxz>发送</button>
+<div id=xzreply class=list></div>
+<p class=hint id=xzhint>回答显示在设备的「机器人」页底部；未激活时把激活码输入 xiaozhi.me 控制台完成绑定。</p></div>
+</section>
 
 <section class=page id=p1>
 <div class=card><div class=cardhd><b>公网 IP 信息</b>

@@ -72,6 +72,9 @@ typedef struct {
 // 一次 HTTPS GET → malloc 的明文 body（需要时已 gunzip），caller free。
 // **非 2xx 也返回 body**（错误 JSON 在里面），状态码看 io->status。
 char *net_http_get_text(const char *url, net_http_req_t *io, size_t *out_len);
+// HTTPS 串行闸（内部堆只够一条 TLS）：所有 HTTPS 请求（GET/POST）过锁
+void  NetBsp_HttpLock(void);
+void  NetBsp_HttpUnlock(void);
 char *net_gunzip(const char *gz, size_t gz_len, size_t *out_len);
 void  net_url_encode(char *out, size_t out_n, const char *in);
 bool  net_json_str(const char *body, const char *key, char *out, size_t out_n);
@@ -112,3 +115,8 @@ void weather_task(void *arg);     // 天气轮询任务（有凭据时由 NetBsp
 // 拉一次 UAPI /network/myip?source=commercial。成功返回 true 并填满 out
 // （ip/region/isp/district + 归一化出的 city）。失败已在内部打日志。
 bool NetBsp_FetchPublicIp(uapi_myip_t *out);
+
+// ------------ net_xiaozhi.c ------------------------------------------
+// xiaozhi AI 对话任务：激活流程（无 NVS websocket 配置时）+ 按需 WebSocket
+// 文本会话。状态/情绪/对话文本写入 ui_model 的 bot_* 字段。
+void xiaozhi_task(void *arg);

@@ -37,6 +37,7 @@
 #include <esp_wifi.h>
 #include <esp_log.h>
 #include <esp_timer.h>
+#include <esp_heap_caps.h>
 #include <nvs.h>
 
 // ------------ 组件内共享状态（在 net_internal.h 里 extern 声明） ---------
@@ -204,6 +205,11 @@ void NetBsp_Start(void)
         // 栈：mbedtls TLS 握手 + esp_crt_bundle 峰值 ~12 KiB，zlib inflate 走
         // heap 分配（内部工作缓冲不占栈），加上局部 url[320] 等，16 KiB 足够。
         xTaskCreatePinnedToCore(weather_task, "weather", 16 * 1024, NULL, 3, NULL, 0);
+        // xiaozhi 对话任务：激活流程 + 按需 WebSocket 文本/语音会话。
+        // 栈要 24KB：opus 编解码单次调用吃 ~10KB 级 + TLS 会话。
+        // **不能用 PSRAM 栈**：NVS 写入会关 PSRAM cache，外部栈的任务过不了
+        // esp_task_stack_is_sane_cache_disabled() 断言（真崩过）。
+        xTaskCreatePinnedToCore(xiaozhi_task, "xiaozhi", 24 * 1024, NULL, 3, NULL, 0);
     }
 
     // 无网看门狗不再自带任务 —— 由 user_app tick_task 的 5s 慢节拍调

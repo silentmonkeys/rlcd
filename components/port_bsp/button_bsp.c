@@ -2,7 +2,9 @@
 //   BOOT  短按 → 下一页（ui_pages_next）
 //   BOOT  长按 → 重建全部页面（ui_pages_rebuild）
 //   KEY   短按 → 上一页（ui_pages_prev）
-//   KEY   长按 → 在 WEATHER 页时立即拉取一次天气（NetBsp_TriggerWeatherFetch）
+//   KEY   按住 ≥350ms → xiaozhi 按键说话（PTT），松开结束收音
+//   KEY   长按 → 在 WEATHER 页时立即拉取一次天气（仅 xiaozhi 未就绪时，
+//                 PTT 可用时长按已被语音占用）
 //
 // 引脚：直接在这里内联，避免拉 main 组件（防止循环依赖）。
 // 参考 10_FactoryProgram/components/port_bsp/button_bsp.c。
@@ -24,9 +26,14 @@
 #define KEY_KEY_ID     2
 #define BTN_ACTIVE     0   // 两个键都是按下拉低
 
+// PTT 起判延时：短于它松开 = 普通点击（切页），按住超过它 = 开始说话
+#define PTT_START_DELAY_US  (350 * 1000)
+
 static const char *TAG = "button_bsp";
 static Button s_boot_btn;
 static Button s_key_btn;
+static esp_timer_handle_t s_ptt_timer;
+static volatile bool s_ptt_fired;    // 350ms 定时器已触发（本轮是语音，不是点击）
 
 // ---------- BOOT ----------
 static void on_boot_click(Button *btn)
@@ -53,6 +60,8 @@ static void on_boot_long(Button *btn)
 static void on_key_click(Button *btn)
 {
     (void)btn;
+    // PTT 定时器已触发过的按住-松开不是点击
+    if (s_ptt_fired) return;
     // SETUP 页面上任一键短按 → 隐藏 SETUP 并回 HOME（本次开机不再弹）
     if (ui_pages_current() == UI_PAGE_SETUP) {
         ESP_LOGI(TAG, "KEY click on SETUP → dismiss setup");
@@ -63,16 +72,39 @@ static void on_key_click(Button *btn)
     ui_pages_prev();
 }
 
-// 长按 KEY：只在 WEATHER 详情页触发，立即拉一次天气数据；
-// 其它页面上长按无副作用（避免误触）。
+// KEY 按住 350ms：请求开一轮 xiaozhi 语音会话。
+// xiaozhi 未就绪/文本对话进行中时 PttDown 返回 false → 不说话，
+// 此时 WEATHER 页长按拉天气的行为保留（on_key_long 里判断）。
+static void ptt_timer_cb(void *arg)
+{
+    (void)arg;
+    s_ptt_fired = true;
+    if (NetBsp_XiaozhiPttDown()) {
+        ESP_LOGI(TAG, "KEY hold → PTT start");
+    }
+}
+
+static void on_key_down(Button *btn)
+{
+    (void)btn;
+    s_ptt_fired = false;
+    esp_timer_start_once(s_ptt_timer, PTT_START_DELAY_US);
+}
+
+static void on_key_up(Button *btn)
+{
+    (void)btn;
+    esp_timer_stop(s_ptt_timer);     // 快速点击：还没到 350ms，取消 PTT
+    NetBsp_XiaozhiPttUp();           // 未在说话时调用无副作用
+}
+
+// 长按 KEY：只在 WEATHER 页触发拉天气；PTT 已接管的按住不触发。
 static void on_key_long(Button *btn)
 {
     (void)btn;
-    if (ui_pages_current() == UI_PAGE_WEATHER) {
+    if (ui_pages_current() == UI_PAGE_WEATHER && !s_ptt_fired) {
         ESP_LOGI(TAG, "KEY long press on WEATHER → trigger weather fetch");
         NetBsp_TriggerWeatherFetch();
-    } else {
-        ESP_LOGI(TAG, "KEY long press (page=%d, ignored)", (int)ui_pages_current());
     }
 }
 
@@ -113,9 +145,17 @@ void ButtonBsp_Init(void)
 
     // KEY
     button_init(&s_key_btn, read_button_gpio, BTN_ACTIVE, KEY_KEY_ID);
+    button_attach(&s_key_btn, BTN_PRESS_DOWN,       on_key_down);
+    button_attach(&s_key_btn, BTN_PRESS_UP,         on_key_up);
     button_attach(&s_key_btn, BTN_SINGLE_CLICK,     on_key_click);
     button_attach(&s_key_btn, BTN_LONG_PRESS_START, on_key_long);
     button_start(&s_key_btn);
+
+    // PTT 起判定时器（350ms 单次）
+    esp_timer_create_args_t ptt_args = {};
+    ptt_args.callback = &ptt_timer_cb;
+    ptt_args.name     = "ptt_start";
+    ESP_ERROR_CHECK(esp_timer_create(&ptt_args, &s_ptt_timer));
 
     // 5ms tick 定时器
     esp_timer_create_args_t args = {};

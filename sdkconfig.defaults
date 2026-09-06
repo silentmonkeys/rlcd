@@ -62,3 +62,19 @@ CONFIG_LV_FS_POSIX_LETTER=65
 # 确认点在 user_app.c 的 5s 慢节拍（连续跑满 60s 才 mark），
 # 保证不是"刚 app_main 完就 mark"那种假确认。
 CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+
+# ---- WiFi 内存瘦身（内部 RAM 紧张：TLS 单连接要 ~30KB，见 net_weather 堆日志）----
+# RX 静态 16→12；TX 静态 16（~24KB 常驻）→ 动态按需；RX BA 窗 16→6（Kconfig 默认）。
+# 约束：STATIC_RX ≥ 2×RX_BA_WIN。
+CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=12
+CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=16
+CONFIG_ESP_WIFI_TX_BUFFER_TYPE=1
+CONFIG_ESP_WIFI_DYNAMIC_TX_BUFFER=y
+CONFIG_ESP_WIFI_RX_BA_WIN=6
+
+# ---- mbedtls 内存瘦身（内部 RAM ~34KB 时单条 TLS 仍放不下）----
+# 收发缓冲按需分配/用完即还（每连接省 ~12KB），收缓冲 16K→8K
+# （QWeather/UAPI/xiaozhi 的响应都是几 KB 级 JSON，用不满 16K 记录）。
+CONFIG_MBEDTLS_DYNAMIC_BUFFER=y
+CONFIG_MBEDTLS_SSL_IN_CONTENT_LEN=8192
+CONFIG_MBEDTLS_SSL_OUT_CONTENT_LEN=2048

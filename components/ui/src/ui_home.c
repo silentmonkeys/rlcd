@@ -78,6 +78,10 @@ static ui_model_t s_model = {
     .sunrise = "", .sunset = "",
     .wifi_connected = false, .wifi_rssi = 0,
     .battery_percent = 0,
+    // BOT 页：xiaozhi 未配置/离线，情绪中性，无对话内容
+    .bot_state = UI_BOT_ST_OFFLINE, .bot_emotion = UI_BOT_EMO_NEUTRAL,
+    .bot_xz_status = UI_BOT_XZ_UNSET, .bot_xz_code = "",
+    .bot_chat_user = "", .bot_chat_reply = "",
 };
 
 ui_model_t *ui_model_get(void) { return &s_model; }

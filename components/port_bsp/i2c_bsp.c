@@ -38,6 +38,11 @@ esp_err_t I2cBus_Init(int scl_pin, int sda_pin, int i2c_port)
     return err;
 }
 
+i2c_master_bus_handle_t I2cBus_GetHandle(void)
+{
+    return s_bus;
+}
+
 // -------- SHTC3 --------
 #define SHTC3_ADDR              0x70
 #define SHTC3_CMD_READ_ID       0xEFC8

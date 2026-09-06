@@ -6,6 +6,8 @@ extern "C" {
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
+#include "esp_err.h"
 
 // -------- 配置项 --------------------------------------------------
 // 存在 NVS 命名空间 "rlcd_cfg" 下。天气固定走 QWeather。
@@ -104,6 +106,36 @@ bool NetBsp_SaveConfig(const net_config_t *in);
 
 // 清掉 WiFi 凭据 —— 下次启动会回 SoftAP 配网态
 void NetBsp_ForgetWifi(void);
+
+// -------- xiaozhi AI 对话（net_xiaozhi.c）----------------------------
+// 发送一句文本问题（门户聊天框）。走「开 WS → hello → listen detect → 收
+// tts/llm → stop 即断开」的一轮会话。对话进行中返回 false；任务未就绪
+// （未配网/激活中）也返回 false。回答与情绪写入 ui_model 的 bot_* 字段。
+bool NetBsp_XiaozhiChat(const char *text);
+
+// 服务通道状态（UI_BOT_XZ_*：未配置/激活中/已就绪/错误）
+int8_t NetBsp_XiaozhiStatus(void);
+
+// -------- xiaozhi 语音底座（port_bsp/audio_bsp.c 反向注册）----------
+// 音频底座是硬件层，net_bsp 不直接依赖 port_bsp（button_bsp 已反向依赖
+// net_bsp，再正向依赖就成环）。port_bsp 在 AudioBsp_Init() 末尾把函数表
+// 注册进来；未注册时 xiaozhi 走纯文本对话（模拟器即如此）。
+// 全部 PCM 都是 16kHz/16bit/单声道。
+typedef struct {
+    bool ready;                                              // 底座可用
+    esp_err_t (*talk_start)(void);                           // 开 I2S 双工 + PA
+    void      (*talk_stop)(void);                            // 关通路 + PA
+    int       (*mic_read)(int16_t *pcm, int samples);        // 阻塞读麦克风
+    int       (*spk_write)(const int16_t *pcm, int samples); // 阻塞写扬声器
+} xiaozhi_audio_ops_t;
+
+// 注册音频底座（AudioBsp_Init 内部调用；op=NULL 清除）
+void NetBsp_XiaozhiSetAudioOps(const xiaozhi_audio_ops_t *ops);
+
+// KEY 按住说话：down=true 请求开一轮语音会话（返回 false=暂不可用：
+// 未就绪/文本对话进行中/上一轮还没收尾）。松开时调 PttUp 结束收音。
+bool NetBsp_XiaozhiPttDown(void);
+void NetBsp_XiaozhiPttUp(void);
 
 #ifdef __cplusplus
 }

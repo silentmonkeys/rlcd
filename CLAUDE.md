@@ -67,21 +67,21 @@ GUI 客户端见 [tools/rlcd_debug_gui/README.md](tools/rlcd_debug_gui/README.md
 | 索引 | 页面     | 文件          | 可见性            |
 | ---- | -------- | ------------- | ----------------- |
 | 0    | HOME     | ui_home.c     | 始终              |
-| 1    | WEATHER  | ui_weather.c  | 始终              |
-| 2    | CALENDAR | ui_calendar.c | 始终              |
-| 3    | DEVICE   | ui_device.c   | 始终              |
-| 4    | BOT      | ui_bot.c      | 始终              |
+| 1    | BOT      | ui_bot.c      | 始终              |
+| 2    | WEATHER  | ui_weather.c  | 始终              |
+| 3    | CALENDAR | ui_calendar.c | 始终              |
+| 4    | DEVICE   | ui_device.c   | 始终              |
 | 5    | SETUP    | ui_setup.c    | 仅 ap_active=true |
 
-切换：BOOT 短按下一页 / KEY 短按上一页 / BOOT 长按重建 UI。
+切换：BOOT 短按下一页 / KEY 短按上一页 / BOOT 长按重建 UI / KEY 按住 ≥350ms 说话（见「语音对话」）。
 
 ## 组件
 
-- **port_bsp** — DisplayPort C++ 类（SPI3 驱动 RLCD）、I2C 主机 + SHTC3 驱动、按键 BSP（multi_button + 5ms tick）、电池 ADC（`adc_bsp` — ADC1_CH3/GPIO4 + 曲线校准 ×3 分压）、SD 卡 BSP（SDMMC 1-line + 5s 热插拔探活）。引脚见 `main/user_config.h`。
+- **port_bsp** — DisplayPort C++ 类（SPI3 驱动 RLCD）、I2C 主机 + SHTC3 驱动、按键 BSP（multi_button + 5ms tick，KEY 按住 350ms 判定为 PTT 起手）、电池 ADC（`adc_bsp` — ADC1_CH3/GPIO4 + 曲线校准 ×3 分压）、SD 卡 BSP（SDMMC 1-line + 5s 热插拔探活）、**音频底座 `audio_bsp`**（ES8311 DAC 出声 + ES7210 双麦收音，I2S std 全双工 + esp_codec_dev；I2C 复用 SHTC3 总线、地址逐个 probe；PA=GPIO46 仅会话期间开）。引脚见 `main/user_config.h`。
 - **app_bsp** — LVGL v9 端口：tick 定时器、任务 handler、互斥（Lvgl_lock/unlock）。
 - **ui** — 共享 UI。`ui_home_create()` 建树；其他任务写 `ui_model_get()` 后调 `ui_home_request_refresh()` 或 `ui_home_apply_locked()`。
-- **ui_bot** — 机器人页：播放 bloub（`/home/chen/demo/bloub`，MIT）预渲染动画。bloub 的引擎是纯函数（`engine.sample(t)`），构建期用 `tools/gen_bloub_frames.py`（Node22 `--experimental-strip-types` 直载 bloub 源码 → cairosvg 二值化）采样成 **BLO1 帧序列** `partitions/fonts/bloub_seq.bin`（100 帧 160×160 @8fps ≈ 313KB，帧定长无索引）；运行时 `ui_bot.c` 复用 weather icon 的 I1 调色板加载模式，lv_timer 1000/fps 读帧。**改蒙太奇/尺寸后重跑 `python3 tools/gen_bloub_frames.py`**（`--ref-dir` 可导出 PBM 参考帧，供后续 C 引擎移植做逐像素比对）。
-- **net_bsp** — WiFi STA/SoftAP、HTTP 配网门户、NVS 持久化、天气拉取（**QWeather** 单一 provider）。按职责拆为多文件：`net_bsp.c`（入口 + 共享状态 + NVS + 看门狗）/ `net_wifi.c`（WiFi 事件 + SNTP）/ `net_portal.c`（管理门户：静态资源 + JSON API）/ `net_http.c`（**共享** HTTPS GET + gzip 解压 + 轻量 JSON 取值，QWeather 与 UAPI 共用）/ `net_weather.c`（QWeather API）/ `net_uapi.c`（**UAPI uapis.cn** `/network/myip`：公网 IP + 自动城市）/ `net_apistat.c`（**外部接口调用统计**，明细存 SD 按月分文件）/ `net_calendar.c`（日历存 SD，原子写）/ `net_ota.c`（`POST /api/ota` 流式接收固件写备用 app 槽）/ `net_internal.h`（组件内共享声明）。对外 API 仍只在 `net_bsp.h`。门户前端**权威源码在 `components/net_bsp/portal/`**（index.html / style.css / app.js），改完必须跑 `python3 tools/gen_portal.py` 重新生成 `src/portal_assets.h`（gzip 字节数组，勿手改）+ `simulator/portal_preview.html`（带 mock，浏览器直接打开可预览）。
+- **ui_bot** — 机器人页：bloub C 引擎实时渲染 + xiaozhi 对话文本。bloub（`/home/chen/demo/bloub`，MIT）的 `src/bot/` 是纯函数引擎，已移植为 C（`src/bloub/`：math/face/states/engine/render 五个文件，`bloub_bot.h` 对外）——状态机子集 idle/wink/wide/thinking/sleep + Catmull-Rom 轮廓 → 扫描线 1-bit 光栅化。`ui_bot.c` lv_timer 80ms 一拍：引擎时钟推进 → `ui_model` 的 bot_state/bot_emotion 映射成 bloub 姿态（LISTENING→wide、THINKING→thinking、SPEAKING→跟情绪等）→ sample → render → 刷 I1 位图。引擎与 Node 真值逐帧像素比对：`python3 tools/bloub_golden.py`（100 帧全蒙太奇 <0.5%，阈值 2.5%），离线渲染入口 `rlcd_sim --bot-frame <t> --bot-out <pbm>`。**旧的 bloub_seq.bin 预渲染方案已删除**；改蒙太奇/姿态先看 bloub 仓库 CLAUDE.md（常数勿取整）。
+- **net_bsp** — WiFi STA/SoftAP、HTTP 配网门户、NVS 持久化、天气拉取（**QWeather** 单一 provider）。按职责拆为多文件：`net_bsp.c`（入口 + 共享状态 + NVS + 看门狗）/ `net_wifi.c`（WiFi 事件 + SNTP）/ `net_portal.c`（管理门户：静态资源 + JSON API）/ `net_http.c`（**共享** HTTPS GET + gzip 解压 + 轻量 JSON 取值，QWeather 与 UAPI 共用）/ `net_weather.c`（QWeather API）/ `net_uapi.c`（**UAPI uapis.cn** `/network/myip`：公网 IP + 自动城市）/ `net_apistat.c`（**外部接口调用统计**，明细存 SD 按月分文件）/ `net_calendar.c`（日历存 SD，原子写）/ `net_ota.c`（`POST /api/ota` 流式接收固件写备用 app 槽）/ `net_xiaozhi.c`（**xiaozhi AI 对话**：激活 + WS 文本/语音会话，见「语音对话」）/ `net_internal.h`（组件内共享声明）。对外 API 仍只在 `net_bsp.h`。门户前端**权威源码在 `components/net_bsp/portal/`**（index.html / style.css / app.js），改完必须跑 `python3 tools/gen_portal.py` 重新生成 `src/portal_assets.h`（gzip 字节数组，勿手改）+ `simulator/portal_preview.html`（带 mock，浏览器直接打开可预览）。
 - **user_app** — 传感器 / 电池 ADC 初始化 + 1Hz tick 任务把读数写入 ui_model（温湿度每秒；电量、SD 探活、无网看门狗共用 5s 慢节拍）；独立 CSV 日志任务（fsync 落盘）。RTC 待硬件到货再接。
 
 ## 后台任务与节拍
@@ -93,6 +93,7 @@ GUI 客户端见 [tools/rlcd_debug_gui/README.md](tools/rlcd_debug_gui/README.md
 | user_tick                | 1s；**5s 慢节拍**     | 每秒读时间 + SHTC3；5s 慢节拍做 SD 热插拔探活 + 电池采样 +`NetBsp_OfflineWatchdogTick()` + `NetBsp_OtaSelfTestTick()` |
 | csv_log                  | 10min                 | 追加一行 CSV 到 SD（首帧延迟 15s，fsync 落盘）                                           |
 | weather                  | 成功 10min / 失败 30s | 拉 QWeather；**城市留空时顺带每日一次 UAPI 定位**（自动城市 + 公网 IP）；事件位可提前唤醒 |
+| xiaozhi                  | 常驻，按需会话        | 激活流程（无 NVS 配置时轮询）+ 文本/语音对话（每轮独立 WS，见「语音对话」）               |
 | LVGL                     | 自适应 1~500ms        | `lv_timer_handler()` 渲染                                                                |
 | button tick（esp_timer） | 5ms                   | multi_button 按键去抖                                                                    |
 | lvgl tick（esp_timer）   | 5ms                   | 给 LVGL 喂 tick                                                                          |
@@ -100,6 +101,30 @@ GUI 客户端见 [tools/rlcd_debug_gui/README.md](tools/rlcd_debug_gui/README.md
 > 无网看门狗不自带任务：做成一次性 `NetBsp_OfflineWatchdogTick()`，由 user_tick 的 5s 慢节拍调用（状态未就绪时函数自身 early-return，早启无害）。
 >
 > **OTA 自检确认**同样是一次性的 `NetBsp_OtaSelfTestTick()`，挂在同一条 5s 慢节拍上：新固件首次启动处于 `PENDING_VERIFY`，稳定跑满 60s 才调 `esp_ota_mark_app_valid_cancel_rollback()`；若这之前崩溃重启，bootloader 自动回滚到旧槽。非 OTA 启动时函数第一次调用就 early-return 并自锁，零开销。依赖 `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y`。
+
+## 语音对话（xiaozhi + ES8311/ES7210）
+
+xiaozhi AI 对话：文本（门户聊天框）+ 语音（板载 ES8311 DAC 出声 / ES7210 双麦收音）。
+
+- **激活**：设备联网后 POST `https://api.tenclass.net/xiaozhi/ota/` → 未激活时响应带
+  `activation.code`（6 位码），管理门户「AI 助手」卡片展示；用户到 **xiaozhi.me**
+  控制台添加设备输码绑定；设备轮询 `<ota>/activate`（202=等待），成功后 check 响应
+  携带 `websocket{url,token}` 存 NVS（命名空间 `xiaozhi`）。
+- **按键说话（PTT）**：KEY 按住 ≥350ms 开始收音、松开结束（`button_bsp.c` 用
+  esp_timer 单次 350ms 起判，快速点击仍是切页）。流：listen start(manual) →
+  麦克风 16k/16bit/mono 60ms/帧 → opus 编码 → WS binary；listen stop 后服务端
+  STT→LLM→TTS，下行 opus → 解码 → 线性重采样到 16k → 扬声器；tts stop 且播完即断开。
+- **采样率注意**：服务端 TTS 常见 **24k**（以 hello 的 audio_params 为准），而 I2S
+  全双工收发共享时钟、麦克风固定 16k —— 播放侧必须重采样（`net_xiaozhi.c` 的
+  `resamp_16k`，相位跨帧保持）。
+- **音频底座**：`port_bsp/audio_bsp.c`（esp_codec_dev：ES8311 只 DAC + ES7210 只
+  ADC，共享 I2S 时钟、数据线分开）。通过 `NetBsp_XiaozhiSetAudioOps()` **反向注册**
+  给 net_bsp（不能正向依赖：button_bsp→net_bsp 已成环，net_bsp→port_bsp 会闭环）。
+  未注册/探测失败（无芯片）自动回落纯文本，模拟器即纯文本路径。
+- **I2C 地址 strap 未知**：初始化逐个 probe（ES8311: 0x18/0x19，ES7210:
+  0x40-43/0x20-23，esp_codec_dev 的 `cfg.addr` 要 8bit 形式）。
+- **调试台**：`bot_state`（0-7）/`bot_emotion`（0-9）/`bot_chat_reply` 三个字段 +
+  8 个 BOT 场景预设（聆听/思考/播报等），机器人姿态实时跟 `ui_model` 走。
 
 ## 自动城市 & 公网 IP（UAPI uapis.cn）
 

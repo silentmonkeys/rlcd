@@ -17,6 +17,39 @@ extern "C" {
 #define UI_INT_NA    (-1)
 #define UI_TEMP_NA   (-999)
 
+// ---- BOT 页：xiaozhi 对话接入 -----------------------------------------
+// 设备状态（对齐 xiaozhi-esp32 的 DeviceState，只取 UI 关心的子集）
+enum {
+    UI_BOT_ST_OFFLINE = 0,   // 未配置 / 未连接
+    UI_BOT_ST_IDLE,          // 空闲
+    UI_BOT_ST_CONNECTING,    // 通道建立中
+    UI_BOT_ST_LISTENING,     // 聆听
+    UI_BOT_ST_THINKING,      // LLM 处理中
+    UI_BOT_ST_SPEAKING,      // TTS 播报中
+    UI_BOT_ST_ACTIVATING,    // 等待激活（bot_xz_code 有效）
+    UI_BOT_ST_ERROR,         // 网络/协议错误
+};
+// LLM 情绪（xiaozhi llm.emotion 字符串归一化后的枚举；UI 不碰字符串）
+enum {
+    UI_BOT_EMO_NEUTRAL = 0,
+    UI_BOT_EMO_HAPPY,        // happy/laughing/funny/delicious/winking/confident
+    UI_BOT_EMO_SAD,          // sad/crying/embarrassed
+    UI_BOT_EMO_ANGRY,        // angry
+    UI_BOT_EMO_SURPRISED,    // surprised/shocked/silly
+    UI_BOT_EMO_SLEEPY,       // sleepy/relaxed
+    UI_BOT_EMO_THINKING,     // thinking
+    UI_BOT_EMO_LOVING,       // loving
+    UI_BOT_EMO_CONFUSED,     // confused
+    UI_BOT_EMO_COOL,         // cool
+};
+// xiaozhi 服务通道状态（门户展示 + bot 页行为）
+enum {
+    UI_BOT_XZ_UNSET = 0,     // 未配置（未激活）
+    UI_BOT_XZ_ACTIVATING,    // 激活中（bot_xz_code 待用户到控制台输入）
+    UI_BOT_XZ_READY,         // 已激活可对话
+    UI_BOT_XZ_ERROR,
+};
+
 typedef struct {
     // 时间
     int  hour;          // 0..23
@@ -84,6 +117,14 @@ typedef struct {
     // ---- Flash 用量（user_app 每秒刷新）----
     uint32_t flash_used_kb;         // App + 分区已用 KB
     uint32_t flash_free_kb;         // 剩余 KB
+
+    // ---- BOT 页用（net_xiaozhi 填；写入后 ui_bot_apply_locked 自动跟上）----
+    int8_t   bot_state;             // UI_BOT_ST_*（驱动机器人姿态）
+    int8_t   bot_emotion;           // UI_BOT_EMO_*（llm.emotion；说话时覆盖姿态）
+    int8_t   bot_xz_status;         // UI_BOT_XZ_*（服务通道状态）
+    char     bot_xz_code[8];        // 激活码（未激活时门户/bot 页可展示）
+    char     bot_chat_user[96];     // 用户问题（STT 文本 / 门户发送的文本）
+    char     bot_chat_reply[192];   // AI 回答（tts sentence_start 的最新一句）
 } ui_model_t;
 
 // 全局单例（simulator / device 共享），初始化时字段填合理默认。

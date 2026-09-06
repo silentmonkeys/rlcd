@@ -20,6 +20,7 @@
 #include "ui_model.h"
 #include "ui_font.h"
 #include "sim_console.h"
+#include "bloub_bot.h"
 
 #include <SDL.h>
 
@@ -33,6 +34,10 @@
 #define LCD_W   400
 #define LCD_H   300
 #define SCALE   2       // 窗口放大倍率
+
+// --bot-frame 离线渲染的位图尺寸（与 Node 真值采样同尺寸才有逐像素可比性）
+#define BOT_OUT_SIZE   160
+#define BOT_OUT_STRIDE ((BOT_OUT_SIZE + 7) / 8)
 
 // 硬件像素——0/255，只有两种值
 static uint8_t framebuf[LCD_W * LCD_H];
@@ -298,8 +303,14 @@ int main(int argc, char **argv)
     // --gallery-capture <dir>   —— 8 张连拍到目录，退出
     // --page <id>               —— 启动时切到指定页（0=home, 1=device）
     // --pos <x>,<y>             —— 窗口左上角坐标（给 dev_sim.sh 排版用，默认居中）
+    // --bot-frame <t> --bot-out <path.pbm>
+    //                           —— 离线渲染 bloub 蒙太奇第 t 秒的 1-bit 帧
+    //                              （纯 C 引擎，不经 LVGL/SDL），写 PBM P4 退出。
+    //                              供 tools/bloub_golden.py 与 Node 真值比对。
     const char *capture_path = NULL;
     const char *gallery_dir = NULL;
+    const char *bot_out = NULL;
+    float bot_t = -1.0f;
     int capture_ms = 1500;
     int start_page = -1;
     int win_x = SDL_WINDOWPOS_CENTERED, win_y = SDL_WINDOWPOS_CENTERED;
@@ -310,6 +321,10 @@ int main(int argc, char **argv)
             capture_ms = atoi(argv[++i]);
         } else if (!strcmp(argv[i], "--page") && i + 1 < argc) {
             start_page = atoi(argv[++i]);
+        } else if (!strcmp(argv[i], "--bot-frame") && i + 1 < argc) {
+            bot_t = (float)atof(argv[++i]);
+        } else if (!strcmp(argv[i], "--bot-out") && i + 1 < argc) {
+            bot_out = argv[++i];
         } else if (!strcmp(argv[i], "--pos") && i + 1 < argc) {
             int x, y;
             if (sscanf(argv[++i], "%d,%d", &x, &y) == 2) { win_x = x; win_y = y; }
@@ -325,6 +340,35 @@ int main(int argc, char **argv)
             s_force_humi = atof(argv[++i]);
         }
     }
+
+    // --bot-frame：纯引擎离线渲染，不进 LVGL/SDL（确定性，golden 比对用）
+    if (bot_out && bot_t >= 0.0f) {
+        bloub_engine_t *eng = bloub_engine_create();
+        if (!eng) return 1;
+        int idx = bloub_montage_block_at(bot_t, NULL);
+        // 复刻 BloubBot.vue rendAt 的顺序推进：从第 1 块起逐块 setState 到其
+        // 绝对偏移 —— 否则引擎没有历史链，淡入混合会从初始 idle 出发
+        float off = 0.0f;
+        for (int i = 0; i <= idx; i++) {
+            if (i > 0) off += BLOUB_MONTAGE[i - 1].duration;
+            bloub_engine_set_state(eng, BLOUB_MONTAGE[i].state, off);
+        }
+        bloub_scene_t sc;
+        bloub_engine_sample(eng, bot_t, &sc);
+
+        static uint8_t bits[BOT_OUT_STRIDE * BOT_OUT_SIZE];
+        bloub_bitmap_t bm = { BOT_OUT_SIZE, BOT_OUT_SIZE, bits };
+        bloub_render(&sc, &bm);
+        bloub_engine_free(eng);
+
+        FILE *fp = fopen(bot_out, "wb");
+        if (!fp) { perror(bot_out); return 1; }
+        fprintf(fp, "P4\n%d %d\n", BOT_OUT_SIZE, BOT_OUT_SIZE);
+        fwrite(bits, 1, sizeof(bits), fp);
+        fclose(fp);
+        return 0;
+    }
+
     // --temp / --humi 设了强制值：直接写模型 + 设 override 位
     // 此时还没进主循环，不能用队列，用 sim_console_set_field_override 直接写
     if (!isnan(s_force_temp)) sim_console_set_field_override("indoor_temp", s_force_temp);

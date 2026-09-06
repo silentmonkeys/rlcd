@@ -70,7 +70,14 @@ function tick(){api('/api/status').then(function(s){
   $('f_fwcur').textContent=s.app?'当前 '+s.app:'';
   if(!s.sd){$('nosd').hidden=false;$('calbody').classList.add('off');}
   else{$('nosd').hidden=true;$('calbody').classList.remove('off');}
-}).catch(function(){})}
+  // AI 助手（xiaozhi）：状态徽标 + 激活码提示 + 最新回答
+  var xz=s.xz|0, st=['未配置','激活中','已就绪','错误'][xz]||'未知';
+  $('xzst').textContent=st;
+  if(xz==1&&s.xzcode)$('xzhint').textContent='激活码 '+s.xzcode+'：请到 xiaozhi.me 控制台输入，绑定后设备自动就绪。';
+  else if(xz==2)$('xzhint').textContent='回答会同时显示在设备的「机器人」页底部。';
+  else if(xz==3)$('xzhint').textContent='服务异常，请检查网络后重启设备。';
+  var rep=s.xzreply||'';
+  $('xzreply').innerHTML=rep?('<div class=it><span class=tx>'+rep.replace(/&/g,'&amp;').replace(/</g,'&lt;')+'</span></div>'):'';}).catch(function(){})}
 
 // 公网 IP（uapis.cn /network/myip）—— 布局与天气卡片一致，同一套 .grid/.kv
 // 城市留空时设备每天自动拉一次；手填城市后不再自动拉，靠「刷新」按钮按需获取。
@@ -226,6 +233,17 @@ document.addEventListener('DOMContentLoaded', function(){
   }});
   on('btnstat',function(){busy('btnstat',true);
     tick();loadPubip();setTimeout(function(){busy('btnstat',false)},600)});
+  // AI 助手：发一句文本问题；回答由 xiaozhi_task 写入设备模型，
+  // 随 5s 状态刷新出现在下方和设备的「机器人」页底部
+  on('btnxz',function(){
+    var inp=$('f_xz'),t=inp.value.trim();
+    if(!t){toast('请输入问题','bad');return}
+    busy('btnxz',true);
+    post('/api/xz_chat',{text:t})
+      .then(function(){inp.value='';toast('已发送，等待 AI 回答…','ok');
+        setTimeout(tick,2000)})
+      .catch(function(e){toast(e.message,'bad')})
+      .then(function(){busy('btnxz',false)})});
   on('btnscan',function(){var b=$('scan');b.innerHTML='<div class=msg>正在扫描</div>';
   busy('btnscan',true);api('/api/scan').then(function(j){var l=j.aps||[];
     if(!l.length){b.innerHTML='<div class=msg>未发现可用的 2.4GHz 网络</div>';return}

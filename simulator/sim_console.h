@@ -87,6 +87,9 @@ extern "C" {
 #define OVR_SD_USED       (1ull << 40)
 #define OVR_FLASH_USED    (1ull << 41)
 #define OVR_FLASH_FREE    (1ull << 42)
+#define OVR_BOT_STATE     (1ull << 43)
+#define OVR_BOT_EMO       (1ull << 44)
+#define OVR_BOT_REPLY     (1ull << 45)
 
 
 // 启动 socket server 线程。port=0 时用默认端口 9000。

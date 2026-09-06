@@ -193,6 +193,11 @@ static const field_desc_t FIELDS[] = {
     FLD("sd_used_mb",       FT_U32,  sd_used_mb,       OVR_SD_USED),
     FLD("flash_used_kb",    FT_U32,  flash_used_kb,    OVR_FLASH_USED),
     FLD("flash_free_kb",    FT_U32,  flash_free_kb,    OVR_FLASH_FREE),
+
+    // ---- BOT 页（xiaozhi 状态 / 情绪 / 回答文本）----
+    FLD("bot_state",        FT_I8,   bot_state,        OVR_BOT_STATE),
+    FLD("bot_emotion",      FT_I8,   bot_emotion,      OVR_BOT_EMO),
+    FLD("bot_chat_reply",   FT_STR,  bot_chat_reply,   OVR_BOT_REPLY),
 };
 
 #undef FLD

@@ -69,6 +69,7 @@ class F:
     step: float = 1
     unit: str = ""
     na: object = None
+    choices: object = None   # kind="enum"：((值, 标签), ...) → 数字值下拉选
 
 
 NAN = float("nan")
@@ -135,6 +136,17 @@ FIELD_GROUPS = [
         F("ap_ip",           "AP IP",         "s"),
         F("setup_dismissed", "已退出配网页",  "b"),
     ]),
+    ("BOT 机器人", [
+        # 枚举值与 ui_model.h 的 UI_BOT_ST_* / UI_BOT_EMO_* 一一对应
+        F("bot_state", "设备状态", "enum",
+          choices=((0, "离线"), (1, "空闲"), (2, "连接中"), (3, "聆听"),
+                   (4, "思考"), (5, "播报"), (6, "等待激活"), (7, "错误"))),
+        F("bot_emotion", "LLM 情绪", "enum",
+          choices=((0, "中性"), (1, "开心"), (2, "难过"), (3, "生气"),
+                   (4, "惊讶"), (5, "瞌睡"), (6, "思考"), (7, "喜爱"),
+                   (8, "困惑"), (9, "得意"))),
+        F("bot_chat_reply", "AI 回答", "s", unit="显示在页面底部"),
+    ]),
 ]
 
 ALL_FIELDS = {f.name: f for _, fs in FIELD_GROUPS for f in fs}
@@ -142,10 +154,10 @@ ALL_FIELDS = {f.name: f for _, fs in FIELD_GROUPS for f in fs}
 # 页面（与 ui_pages.h 的 ui_page_id_t 一一对应）
 PAGES = [
     (0, "HOME 主页"),
-    (1, "WEATHER 天气"),
-    (2, "CALENDAR 日历"),
-    (3, "DEVICE 设备"),
-    (4, "BOT 机器人"),
+    (1, "BOT 机器人"),
+    (2, "WEATHER 天气"),
+    (3, "CALENDAR 日历"),
+    (4, "DEVICE 设备"),
     (5, "SETUP 配网"),
 ]
 
@@ -226,6 +238,33 @@ SCENES = [
     ]),
     ("无 SD 卡", [
         ("sd_mounted", "false"), ("sd_total_mb", 0), ("sd_used_mb", 0),
+    ]),
+    ("BOT 离线", [
+        ("bot_state", 0), ("bot_emotion", 0), ("bot_chat_reply", ""),
+    ]),
+    ("BOT 聆听", [
+        ("bot_state", 3), ("bot_emotion", 0),
+    ]),
+    ("BOT 思考", [
+        ("bot_state", 4), ("bot_emotion", 6),
+    ]),
+    ("BOT 播报·开心", [
+        ("bot_state", 5), ("bot_emotion", 1),
+        ("bot_chat_reply", "今天天气不错，适合出门散步。"),
+    ]),
+    ("BOT 播报·难过", [
+        ("bot_state", 5), ("bot_emotion", 2),
+        ("bot_chat_reply", "抱歉，我没有找到相关的结果。"),
+    ]),
+    ("BOT 播报·瞌睡", [
+        ("bot_state", 5), ("bot_emotion", 5),
+        ("bot_chat_reply", "夜深了，早点休息吧。"),
+    ]),
+    ("BOT 等待激活", [
+        ("bot_state", 6), ("bot_emotion", 0),
+    ]),
+    ("BOT 错误", [
+        ("bot_state", 7), ("bot_emotion", 2),
     ]),
 ]
 
@@ -356,6 +395,15 @@ class FieldRow:
             self.widget.bind("<<ComboboxSelected>>", lambda _e: self._send_code())
             self.widget.bind("<Return>", lambda _e: self._send_code())
 
+        elif spec.kind == "enum":
+            # 枚举下拉：标签 = "值 中文"，选中即发数字值（readonly，杜绝手滑）
+            self.enum_by_label = {f"{v} {t}": v for v, t in spec.choices}
+            self.widget = ttk.Combobox(parent, textvariable=self.var,
+                                       values=list(self.enum_by_label),
+                                       state="readonly", width=17)
+            self.widget.grid(row=row, column=1, sticky="ew", pady=1)
+            self.widget.bind("<<ComboboxSelected>>", lambda _e: self._send_enum())
+
         else:
             width = 17 if spec.kind == "s" else 10
             if spec.kind == "s":
@@ -407,6 +455,14 @@ class FieldRow:
             return
         self.app.send_field(self.spec.name, code)
 
+    def _send_enum(self):
+        value = self.enum_by_label.get(self.var.get())
+        if value is None:
+            self.app.log(f"[!] 无法识别枚举: {self.var.get()}", "err")
+            return
+        self.applied = self.var.get()   # 下拉本身即意图，不进脏状态
+        self.app.send_field(self.spec.name, value)
+
     # ---- 脏标记 ----
     def _on_edit(self, *_):
         now_dirty = self.var.get() != self.applied
@@ -416,7 +472,7 @@ class FieldRow:
             self.app.refresh_apply_button()
 
     def _paint(self):
-        if self.spec.kind in ("b", "code"):
+        if self.spec.kind in ("b", "code", "enum"):
             return
         try:
             if self.dirty:
@@ -448,6 +504,12 @@ class FieldRow:
             return
         if self.spec.kind == "code":
             self.var.set(LABEL_BY_CODE.get(raw, raw))
+            self.applied = self.var.get()
+            return
+        if self.spec.kind == "enum":
+            # 数字值 → "值 中文" 标签（回读 / 场景后 read_all 都走这里）
+            self.var.set(next((f"{v} {t}" for v, t in self.spec.choices
+                               if str(v) == str(raw).strip()), raw))
             self.applied = self.var.get()
             return
         self.applied = raw

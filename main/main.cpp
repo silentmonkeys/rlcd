@@ -19,6 +19,7 @@
 #include "ui_font.h"
 #include "button_bsp.h"
 #include "sdcard_bsp.h"
+#include "audio_bsp.h"
 
 static const char *TAG = "app_main";
 
@@ -59,6 +60,11 @@ extern "C" void app_main(void)
     // 2.5 SD 卡（可选）—— 失败不影响主流程，UI 显示"SD 未连接"
     SdcardBsp_Init();
 
+    // 2.6 音频底座（可选）—— 依赖 UserApp_AppInit 建好的 I2C 总线。
+    // 失败（无音频芯片）不影响主流程：xiaozhi 回落纯文本对话。
+    AudioBsp_Init();
+    vTaskDelay(1);
+
     // 3. 显示
     RlcdPort.RLCD_Init();
     Lvgl_PortInit(LCD_WIDTH, LCD_HEIGHT, lvgl_flush_cb);
@@ -66,15 +72,19 @@ extern "C" void app_main(void)
     // 3.5 字库：挂 fonts 分区（SPIFFS）+ 加载 3 份 binfont。
     //     必须在 Lvgl_PortInit 之后（lv_binfont_create 依赖 lv_fs），
     //     且在 ui_pages_create 之前（建树时要用字体）。
+    //     vTaskDelay(1)：SPIFFS 挂载/字库加载/建页都是纯 CPU 不让出，
+    //     中间喂一次 IDLE，避免 IDLE0 连续 5s 没跑触发 task WDT。
     UiFont_MountFs();
     if (UiFont_Load() != ESP_OK) {
         ESP_LOGE(TAG, "字库加载失败 —— UI 汉字将回落到内置字体；请确认已烧 fonts 分区");
     }
+    vTaskDelay(1);
 
     if (Lvgl_lock(-1)) {
         ui_pages_create();          // 建所有页面，默认激活主页
         Lvgl_unlock();
     }
+    vTaskDelay(1);
 
     // 4. 数据 → UI 的刷新任务（先起来，UI 立即开始跑，不依赖网络）
     UserApp_TaskInit();

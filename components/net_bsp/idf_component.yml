@@ -1,6 +1,12 @@
 ## net_bsp 组件依赖
 ## 用 espressif/zlib 解 QWeather 的 gzip 响应（IDF 6 不再自带 zlib）。
+## esp_websocket_client：xiaozhi AI 文本对话（net_xiaozhi.c）。
+## cjson：xiaozhi 激活/WS 消息解析（IDF 6 不再自带 json 组件）。
+## esp_audio_codec：xiaozhi 语音对话的 opus 编解码（麦克风上行 / TTS 下行）。
 dependencies:
   idf:
     version: '>=6.0'
   espressif/zlib: "^1.3.1"
+  espressif/esp_websocket_client: "^1.4.0"
+  espressif/cjson: "^1.7.18"
+  espressif/esp_audio_codec: "^2.6.2"
