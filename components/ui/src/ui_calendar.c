@@ -259,7 +259,7 @@ lv_obj_t *ui_calendar_create(void)
                                   m->battery_percent);
     // 底部横线 + 导航点（scaffold 不做是因为标题要复用）
     ui_pixel_rect(s_screen, 9, 278, 378, 2);
-    ui_draw_page_dots(s_screen, 2, 291, 3, 14);
+    ui_draw_page_dots(s_screen, UI_PAGE_CALENDAR, 291, 3, 14);
     lbl_title = title;
 
     // 周日～周六表头

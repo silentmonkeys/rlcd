@@ -4,7 +4,7 @@
 
 RLCD — ESP-IDF 固件 + 桌面模拟器，驱动 Waveshare ESP32-S3-RLCD-4.2（400×300 单色反射 LCD）。
 
-渲染一套家庭信息面板：状态栏（WiFi/电池）+ 大字号 7 段时钟 + 三卡片数值（室内温湿度/天气）+ 天气详情页 + 日历页 + 设备信息页 + 配网提示页。
+渲染一套家庭信息面板：状态栏（WiFi/电池）+ 大字号 7 段时钟 + 三卡片数值（室内温湿度/天气）+ 天气详情页 + 日历页 + 设备信息页 + 机器人动画页 + 配网提示页。
 
 ## 构建 & 运行
 
@@ -70,7 +70,8 @@ GUI 客户端见 [tools/rlcd_debug_gui/README.md](tools/rlcd_debug_gui/README.md
 | 1    | WEATHER  | ui_weather.c  | 始终              |
 | 2    | CALENDAR | ui_calendar.c | 始终              |
 | 3    | DEVICE   | ui_device.c   | 始终              |
-| 4    | SETUP    | ui_setup.c    | 仅 ap_active=true |
+| 4    | BOT      | ui_bot.c      | 始终              |
+| 5    | SETUP    | ui_setup.c    | 仅 ap_active=true |
 
 切换：BOOT 短按下一页 / KEY 短按上一页 / BOOT 长按重建 UI。
 
@@ -79,6 +80,7 @@ GUI 客户端见 [tools/rlcd_debug_gui/README.md](tools/rlcd_debug_gui/README.md
 - **port_bsp** — DisplayPort C++ 类（SPI3 驱动 RLCD）、I2C 主机 + SHTC3 驱动、按键 BSP（multi_button + 5ms tick）、电池 ADC（`adc_bsp` — ADC1_CH3/GPIO4 + 曲线校准 ×3 分压）、SD 卡 BSP（SDMMC 1-line + 5s 热插拔探活）。引脚见 `main/user_config.h`。
 - **app_bsp** — LVGL v9 端口：tick 定时器、任务 handler、互斥（Lvgl_lock/unlock）。
 - **ui** — 共享 UI。`ui_home_create()` 建树；其他任务写 `ui_model_get()` 后调 `ui_home_request_refresh()` 或 `ui_home_apply_locked()`。
+- **ui_bot** — 机器人页：播放 bloub（`/home/chen/demo/bloub`，MIT）预渲染动画。bloub 的引擎是纯函数（`engine.sample(t)`），构建期用 `tools/gen_bloub_frames.py`（Node22 `--experimental-strip-types` 直载 bloub 源码 → cairosvg 二值化）采样成 **BLO1 帧序列** `partitions/fonts/bloub_seq.bin`（100 帧 160×160 @8fps ≈ 313KB，帧定长无索引）；运行时 `ui_bot.c` 复用 weather icon 的 I1 调色板加载模式，lv_timer 1000/fps 读帧。**改蒙太奇/尺寸后重跑 `python3 tools/gen_bloub_frames.py`**（`--ref-dir` 可导出 PBM 参考帧，供后续 C 引擎移植做逐像素比对）。
 - **net_bsp** — WiFi STA/SoftAP、HTTP 配网门户、NVS 持久化、天气拉取（**QWeather** 单一 provider）。按职责拆为多文件：`net_bsp.c`（入口 + 共享状态 + NVS + 看门狗）/ `net_wifi.c`（WiFi 事件 + SNTP）/ `net_portal.c`（管理门户：静态资源 + JSON API）/ `net_http.c`（**共享** HTTPS GET + gzip 解压 + 轻量 JSON 取值，QWeather 与 UAPI 共用）/ `net_weather.c`（QWeather API）/ `net_uapi.c`（**UAPI uapis.cn** `/network/myip`：公网 IP + 自动城市）/ `net_apistat.c`（**外部接口调用统计**，明细存 SD 按月分文件）/ `net_calendar.c`（日历存 SD，原子写）/ `net_ota.c`（`POST /api/ota` 流式接收固件写备用 app 槽）/ `net_internal.h`（组件内共享声明）。对外 API 仍只在 `net_bsp.h`。门户前端**权威源码在 `components/net_bsp/portal/`**（index.html / style.css / app.js），改完必须跑 `python3 tools/gen_portal.py` 重新生成 `src/portal_assets.h`（gzip 字节数组，勿手改）+ `simulator/portal_preview.html`（带 mock，浏览器直接打开可预览）。
 - **user_app** — 传感器 / 电池 ADC 初始化 + 1Hz tick 任务把读数写入 ui_model（温湿度每秒；电量、SD 探活、无网看门狗共用 5s 慢节拍）；独立 CSV 日志任务（fsync 落盘）。RTC 待硬件到货再接。
 

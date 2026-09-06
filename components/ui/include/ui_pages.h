@@ -5,7 +5,8 @@
 //   1. WEATHER  —— 天气详情
 //   2. CALENDAR —— 日历月历 + 节假日 / 标注日期高亮
 //   3. DEVICE   —— 设备信息
-//   4. SETUP    —— 配网提示（仅在 ap_active=true 时可见 / 可切）
+//   4. BOT      —— bloub 机器人动画
+//   5. SETUP    —— 配网提示（仅在 ap_active=true 时可见 / 可切）
 //
 // 按键：
 //   BOOT 短按     —— 下一页
@@ -22,6 +23,7 @@ typedef enum {
     UI_PAGE_WEATHER,
     UI_PAGE_CALENDAR,
     UI_PAGE_DEVICE,
+    UI_PAGE_BOT,
     UI_PAGE_SETUP,
     UI_PAGE_COUNT
 } ui_page_id_t;

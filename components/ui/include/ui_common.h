@@ -6,6 +6,7 @@ extern "C" {
 #endif
 
 #include "lvgl.h"
+#include "ui_pages.h"
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -54,8 +55,9 @@ void ui_status_bar_update(ui_status_bar_t *bar,
 // 销毁状态栏（页面销毁时调用）
 void ui_status_bar_destroy(ui_status_bar_t *bar);
 
-// 底部导航点 —— 根据 ap_active 动态决定总点数（5 或 4），各页面 my_index 传自身页码
-void ui_draw_page_dots(lv_obj_t *parent, int my_index,
+// 底部导航点 —— 按页面可见性动态决定总点数（SETUP 仅 ap_active 时计入），
+// my_page 传自身页枚举，点会落在它在可见序列中的位置
+void ui_draw_page_dots(lv_obj_t *parent, ui_page_id_t my_page,
                        int dot_y, int dot_r, int spacing);
 
 // 子页面通用脚手架：白底 + 居中标题 + 状态栏 + 底部横线 + 导航点
@@ -63,7 +65,7 @@ void ui_draw_page_dots(lv_obj_t *parent, int my_index,
 // 标题 label 可通过 bar->root 的子对象访问，或另存句柄。
 ui_status_bar_t *ui_page_create_scaffold(lv_obj_t *parent,
                                          const char *title,
-                                         int page_index,
+                                         ui_page_id_t page,
                                          int8_t rssi, bool connected,
                                          int percent);
 

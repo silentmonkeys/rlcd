@@ -222,15 +222,23 @@ void ui_status_bar_destroy(ui_status_bar_t *bar)
 
 // ─── 页码点 ───────────────────────────────────────────────────────
 
-void ui_draw_page_dots(lv_obj_t *parent, int my_index,
+void ui_draw_page_dots(lv_obj_t *parent, ui_page_id_t my_page,
                        int dot_y, int dot_r, int spacing)
 {
-    int total = ui_model_get()->ap_active ? 5 : 4;
+    // 可见页计数与 ui_pages.c 的 page_visible 同一套规则：SETUP 需要
+    // ap_active 且未被 dismiss；其余页始终计入
+    int total = 0, my = 0;
+    const ui_model_t *m = ui_model_get();
+    for (int p = 0; p < UI_PAGE_COUNT; p++) {
+        if (p == UI_PAGE_SETUP && !(m->ap_active && !m->setup_dismissed)) continue;
+        if (p == my_page) my = total;
+        total++;
+    }
     int sx = (SCR_W - total * spacing) / 2 + spacing / 2;
     for (int i = 0; i < total; i++) {
         int cx = sx + i * spacing;
         int d  = dot_r * 2;
-        if (i == my_index) {
+        if (i == my) {
             lv_obj_t *dot = ui_pixel_rect(parent, cx - dot_r, dot_y - dot_r, d, d);
             lv_obj_set_style_radius(dot, dot_r, 0);
         } else {
@@ -243,7 +251,7 @@ void ui_draw_page_dots(lv_obj_t *parent, int my_index,
 
 ui_status_bar_t *ui_page_create_scaffold(lv_obj_t *parent,
                                          const char *title,
-                                         int page_index,
+                                         ui_page_id_t page,
                                          int8_t rssi, bool connected,
                                          int percent)
 {
@@ -259,7 +267,7 @@ ui_status_bar_t *ui_page_create_scaffold(lv_obj_t *parent,
 
     // 底部横线 + 导航点
     ui_pixel_rect(parent, 9, BOTTOM_LINE_Y, 378, 2);
-    ui_draw_page_dots(parent, page_index, DOT_Y, DOT_R, DOT_SPACING);
+    ui_draw_page_dots(parent, page, DOT_Y, DOT_R, DOT_SPACING);
 
     return bar;
 }

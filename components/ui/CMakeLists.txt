@@ -4,6 +4,7 @@ idf_component_register(
                "src/ui_weather.c"
                "src/ui_calendar.c"
                "src/ui_device.c"
+               "src/ui_bot.c"
                "src/ui_setup.c"
                "src/ui_pages.c"
                "src/lcd_clock.c"

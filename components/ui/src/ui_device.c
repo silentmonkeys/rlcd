@@ -130,7 +130,7 @@ lv_obj_t *ui_device_create(void)
     s_screen = lv_obj_create(NULL);
     lv_obj_clear_flag(s_screen, LV_OBJ_FLAG_SCROLLABLE);
     const ui_model_t *m = ui_model_get();
-    s_bar = ui_page_create_scaffold(s_screen, "系统信息", 3,
+    s_bar = ui_page_create_scaffold(s_screen, "系统信息", UI_PAGE_DEVICE,
                                     m->wifi_rssi, m->wifi_connected,
                                     m->battery_percent);
 

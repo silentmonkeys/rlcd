@@ -40,6 +40,7 @@ add_executable(rlcd_sim
     ${UI_DIR}/src/ui_weather.c
     ${UI_DIR}/src/ui_calendar.c
     ${UI_DIR}/src/ui_device.c
+    ${UI_DIR}/src/ui_bot.c
     ${UI_DIR}/src/ui_setup.c
     ${UI_DIR}/src/ui_pages.c
     ${UI_DIR}/src/lcd_clock.c

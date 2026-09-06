@@ -109,7 +109,7 @@ lv_obj_t *ui_weather_create(void)
     s_screen = lv_obj_create(NULL);
     lv_obj_clear_flag(s_screen, LV_OBJ_FLAG_SCROLLABLE);
     const ui_model_t *m = ui_model_get();
-    s_bar = ui_page_create_scaffold(s_screen, "天气详情", 1,
+    s_bar = ui_page_create_scaffold(s_screen, "天气详情", UI_PAGE_WEATHER,
                                     m->wifi_rssi, m->wifi_connected,
                                     m->battery_percent);
 

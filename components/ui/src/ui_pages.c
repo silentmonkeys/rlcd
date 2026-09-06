@@ -4,6 +4,7 @@
 #include "ui_weather.h"
 #include "ui_calendar.h"
 #include "ui_device.h"
+#include "ui_bot.h"
 #include "ui_setup.h"
 #include "ui_model.h"
 #include "lvgl.h"
@@ -31,6 +32,7 @@ static bool page_visible(ui_page_id_t p)
 void ui_pages_create(void)
 {
     ui_setup_create();
+    ui_bot_create();
     ui_device_create();
     ui_calendar_create();
     ui_weather_create();
@@ -71,6 +73,7 @@ static lv_obj_t *screen_of(ui_page_id_t p)
         case UI_PAGE_WEATHER:  return ui_weather_create();
         case UI_PAGE_CALENDAR: return ui_calendar_create();
         case UI_PAGE_DEVICE:   return ui_device_create();
+        case UI_PAGE_BOT:      return ui_bot_create();
         case UI_PAGE_SETUP:    return ui_setup_create();
         default:               return ui_home_screen();
     }
@@ -123,6 +126,7 @@ void ui_pages_apply_locked(void)
     ui_weather_apply_locked();
     ui_calendar_apply_locked();
     ui_device_apply_locked();
+    ui_bot_apply_locked();
     ui_setup_apply_locked();
 
     // 如果当前是 SETUP 页但不再可见（配网结束 / 用户 dismiss），自动切回 HOME

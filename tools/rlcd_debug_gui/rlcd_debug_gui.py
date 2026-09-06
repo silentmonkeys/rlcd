@@ -145,7 +145,8 @@ PAGES = [
     (1, "WEATHER 天气"),
     (2, "CALENDAR 日历"),
     (3, "DEVICE 设备"),
-    (4, "SETUP 配网"),
+    (4, "BOT 机器人"),
+    (5, "SETUP 配网"),
 ]
 
 # 和风天气 icon 代码 → 中文描述（实况 API 返回的子集）
